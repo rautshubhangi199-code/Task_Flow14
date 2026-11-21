@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { Plus, Star } from 'lucide-react'
+import { CalendarDays, ClipboardList, Columns3, GanttChart, GitBranch, LayoutDashboard, List, Plus, Star, Target, Timer } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser, useProjectByKey } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
@@ -8,13 +8,17 @@ import { projectService } from '../../services/api'
 import { EmptyState, ProjectIcon } from '../../components/ui'
 
 const TABS = [
-  ['summary', 'Summary'],
-  ['timeline', 'Timeline'],
-  ['backlog', 'Backlog'],
-  ['board', 'Board'],
-  ['calendar', 'Calendar'],
-  ['list', 'List'],
-  ['reports', 'Reports'],
+  ['summary', 'Summary', LayoutDashboard],
+  ['timeline', 'Timeline', GanttChart],
+  ['backlog', 'Backlog', List],
+  ['board', 'Board', Columns3],
+  ['calendar', 'Calendar', CalendarDays],
+  ['list', 'List', List],
+  ['forms', 'Forms', ClipboardList],
+  ['goals', 'Goals', Target],
+  ['development', 'Development', GitBranch],
+  ['worklog', 'Worklogs', Timer],
+  ['reports', 'Reports', LayoutDashboard],
 ] as const
 
 export default function ProjectLayout() {
@@ -43,13 +47,14 @@ export default function ProjectLayout() {
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{project.type}</span>
           <button className="btn-default ml-auto" onClick={() => openCreate({ projectId: project.id })}><Plus size={16} /> Create in {project.key}</button>
         </div>
-        <nav className="mt-3 flex gap-1">
-          {TABS.map(([path, label]) => (
+        <nav className="mt-3 flex gap-0 overflow-x-auto whitespace-nowrap">
+          {TABS.map(([path, label, Icon]) => (
             <NavLink
               key={path}
               to={`/projects/${project.key}/${path}`}
-              className={({ isActive }) => clsx('-mb-px border-b-2 px-3 py-2 text-sm font-medium', isActive ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-600 hover:text-slate-900')}
+              className={({ isActive }) => clsx('-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium', isActive ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-600 hover:text-slate-900')}
             >
+              <Icon size={15} />
               {label}
             </NavLink>
           ))}

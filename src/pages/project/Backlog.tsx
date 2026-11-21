@@ -277,12 +277,16 @@ export default function Backlog() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedIssueId = searchParams.get('selectedIssue')
-  const openIssue = (id: string) => setSearchParams({ selectedIssue: id })
   const closeIssue = () => {
     searchParams.delete('selectedIssue')
     setSearchParams(searchParams)
   }
   const allItems = useStore((s) => s.items)
+  const openIssue = (id: string) => {
+    const item = allItems.find((i) => i.id === id)
+    if (!item || (item.type !== 'Task' && item.type !== 'Story' && item.type !== 'Bug')) return
+    setSearchParams({ selectedIssue: id })
+  }
   const allSprints = useStore((s) => s.sprints)
   const users = useStore((s) => s.users)
   const openCreate = useUi((s) => s.openCreateItem)
@@ -652,7 +656,12 @@ export default function Backlog() {
         <p className="text-sm">Work items in this sprint will be moved to the backlog. This cannot be undone.</p>
       </Modal>
     </div>
-    {selectedIssueId && <WorkItemDrawer itemId={selectedIssueId} onClose={closeIssue} />}
+    {selectedIssueId && (() => {
+      const opened = allItems.find((i) => i.id === selectedIssueId)
+      return opened && (opened.type === 'Task' || opened.type === 'Story' || opened.type === 'Bug')
+        ? <WorkItemDrawer itemId={selectedIssueId} onClose={closeIssue} />
+        : null
+    })()}
     </div>
   )
 }

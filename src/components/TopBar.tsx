@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, LogOut, PanelLeft, Plus, RotateCcw, Search, Settings, User, UserCog, X } from 'lucide-react'
+import { Bell, CreditCard, ExternalLink, FileText, FolderKanban, LayoutGrid, LogOut, Monitor, PanelLeft, Plus, Puzzle, RotateCcw, Search, Settings, User, UserCog, X } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useCurrentUser } from '../store/hooks'
 import { useUi } from '../store/uiStore'
 import { authService } from '../services/api'
+import { canAccessSettings } from '../lib/permissions'
 import { NotificationsBell } from './NotificationsBell'
 import { Avatar, Dropdown, MenuItem } from './ui'
 
@@ -44,7 +45,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </button>
       <Dropdown
         align="right"
-        menuClassName="!min-w-[420px] rounded-lg border-slate-200 !p-0 !py-0 shadow-xl"
+        menuClassName="!min-w-[400px] rounded-lg border-slate-200 !p-0 !py-0 shadow-xl"
         trigger={(open) => (
           <button
             className={`rounded-md p-1.5 text-slate-600 hover:bg-slate-100 ${open ? 'bg-white text-brand-600 ring-2 ring-brand-600' : ''}`}
@@ -55,7 +56,69 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           </button>
         )}
       >
-        {(close) => (
+        {(close) => canAccessSettings(user) ? (
+          <div className="max-h-[min(80vh,620px)] w-[400px] overflow-y-auto py-2">
+            <div className="px-4 pb-1 pt-1 text-[13px] font-semibold text-slate-800">Personal Jira settings</div>
+            <AdminSettingRow
+              icon={<User size={22} strokeWidth={1.75} />}
+              title="General settings"
+              description="Manage language, time zone, and other personal preferences"
+              onClick={() => { navigate('/settings/general'); close() }}
+            />
+            <AdminSettingRow
+              icon={<Bell size={22} strokeWidth={1.75} />}
+              title="Notification settings"
+              description="Manage email and in-app notifications from Jira"
+              onClick={() => { navigate('/settings/notifications'); close() }}
+            />
+            <div className="mt-1 px-4 pb-1 pt-2 text-[13px] font-semibold text-slate-800">Jira admin settings</div>
+            <AdminSettingRow
+              icon={<Monitor size={22} strokeWidth={1.75} />}
+              title="System"
+              description="Manage general configuration, security, automation, user interface, and more"
+              onClick={() => { navigate('/settings/system'); close() }}
+            />
+            <AdminSettingRow
+              icon={<LayoutGrid size={22} strokeWidth={1.75} />}
+              title="Jira apps"
+              description="Manage access, settings, and integrations across Jira"
+              onClick={() => { navigate('/settings/jira-apps'); close() }}
+            />
+            <AdminSettingRow
+              icon={<FolderKanban size={22} strokeWidth={1.75} />}
+              title="Spaces"
+              description="Manage space settings, categories, and more"
+              onClick={() => { navigate('/settings/spaces'); close() }}
+            />
+            <AdminSettingRow
+              icon={<FileText size={22} strokeWidth={1.75} />}
+              title="Work items"
+              description="Configure work types, workflows, screens, fields, and more"
+              onClick={() => { navigate('/settings/work-items'); close() }}
+            />
+            <AdminSettingRow
+              icon={<Puzzle size={22} strokeWidth={1.75} />}
+              title="Marketplace apps"
+              description="Add and manage Jira Marketplace apps and integrations"
+              onClick={() => { navigate('/settings/marketplace'); close() }}
+            />
+            <div className="mt-1 px-4 pb-1 pt-2 text-[13px] font-semibold text-slate-800">Atlassian admin settings</div>
+            <AdminSettingRow
+              icon={<User size={22} strokeWidth={1.75} />}
+              title="User management"
+              description="Manage users, groups, and access requests"
+              external
+              onClick={() => { navigate('/settings/users'); close() }}
+            />
+            <AdminSettingRow
+              icon={<CreditCard size={22} strokeWidth={1.75} />}
+              title="Billing"
+              description="Update your billing details, manage subscriptions, and more"
+              external
+              onClick={() => { navigate('/settings/system'); close() }}
+            />
+          </div>
+        ) : (
           <div className="w-[420px] p-4">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="text-[15px] font-semibold text-slate-800">Personal Jira settings</div>
@@ -124,5 +187,38 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         )}
       </Dropdown>
     </header>
+  )
+}
+
+function AdminSettingRow({
+  icon,
+  title,
+  description,
+  onClick,
+  external,
+}: {
+  icon: ReactNode
+  title: string
+  description: string
+  onClick: () => void
+  external?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      className="flex w-full items-start gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+      onClick={onClick}
+    >
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center text-slate-600">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="text-[15px] font-medium text-slate-800">{title}</span>
+          {external && <ExternalLink size={13} className="text-slate-400" />}
+        </span>
+        <span className="mt-0.5 block text-[13px] leading-snug text-slate-500">{description}</span>
+      </span>
+    </button>
   )
 }

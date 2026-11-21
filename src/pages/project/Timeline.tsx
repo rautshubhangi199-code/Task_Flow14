@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
@@ -18,7 +18,6 @@ import {
   ChevronRight,
   Edit3,
   Filter,
-  GripVertical,
   Info,
   MoreHorizontal,
   Plus,
@@ -39,7 +38,8 @@ import { WorkItemDrawer } from '../../components/WorkItemDrawer'
 
 type Zoom = 'weeks' | 'months' | 'quarters'
 const PX: Record<Zoom, number> = { weeks: 32, months: 10, quarters: 4 }
-const ROW_H = 38
+const ROW_H = 40
+const GROUP_H = 28
 
 // Jira Segmented Status Bar for Timeline Table
 function TimelineStatusBar({
@@ -52,7 +52,17 @@ function TimelineStatusBar({
   projectKey: string
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const hasChildren = childrenList.length > 0
+
+  useEffect(() => {
+    if (!dropdownOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc, true)
+    return () => document.removeEventListener('mousedown', onDoc, true)
+  }, [dropdownOpen])
 
   if (hasChildren) {
     const total = childrenList.length
@@ -74,7 +84,7 @@ function TimelineStatusBar({
 
     return (
       <div className="relative group w-full" title={tooltip}>
-        <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+        <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200">
           {donePct > 0 && (
             <div
               style={{ width: `${donePct}%` }}
@@ -107,7 +117,7 @@ function TimelineStatusBar({
     item.status !== 'Drop'
 
   return (
-    <div className="relative flex items-center w-full" onClick={(e) => e.stopPropagation()}>
+    <div ref={wrapRef} className="relative flex w-full items-center" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
         onClick={() => setDropdownOpen((o) => !o)}
@@ -116,7 +126,7 @@ function TimelineStatusBar({
       >
         <div
           className={clsx(
-            'h-1.5 w-full rounded-full transition-all group-hover:h-2',
+            'h-2 w-full rounded-full transition-all group-hover:h-2.5',
             isComplete
               ? 'bg-[#22a06b]'
               : isInProgress
@@ -173,6 +183,22 @@ export default function Timeline() {
 
   const scroller = useRef<HTMLDivElement>(null)
 
+  useEffect(() => {
+    if (!assigneeMenuRowId) return
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (t.closest('[data-assignee-menu]')) return
+      setAssigneeMenuRowId(null)
+    }
+    document.addEventListener('mousedown', onDoc, true)
+    return () => document.removeEventListener('mousedown', onDoc, true)
+  }, [assigneeMenuRowId])
+
+  const members = useMemo(
+    () => users.filter((u) => project.memberIds.includes(u.id) || project.leadId === u.id),
+    [users, project],
+  )
+
   const items = useMemo(() => {
     let list = allItems.filter((i) => i.projectId === project.id)
     if (searchQuery.trim()) {
@@ -218,18 +244,7 @@ export default function Timeline() {
     return out
   }, [children, expanded])
 
-  // Automatically select first issue on load so the drawer is open like Jira
-  useEffect(() => {
-    if (!selectedIssueId && items.length > 0) {
-      const candidate =
-        items.find((i) => i.id === 'OT-3') ||
-        items.find((i) => i.type === 'Epic') ||
-        items[0]
-      if (candidate) {
-        setSearchParams({ selectedIssue: candidate.id }, { replace: true })
-      }
-    }
-  }, [items, selectedIssueId, setSearchParams])
+  // Drawer opens only when the user clicks a Task, Story, or Bug — never on load / Epic.
 
   const today = now()
   const dates = items.flatMap((i) =>
@@ -253,7 +268,7 @@ export default function Timeline() {
       : zoom === 'months'
       ? eachMonthOfInterval({ start: rangeStart, end: rangeEnd }).map((d) => ({
           d,
-          label: format(d, 'MMMM yyyy'),
+          label: format(d, 'MMMM'),
         }))
       : eachMonthOfInterval({ start: rangeStart, end: rangeEnd })
           .filter((d) => d.getMonth() % 3 === 0)
@@ -308,11 +323,12 @@ export default function Timeline() {
   }
 
   const handleRowClick = (item: WorkItem) => {
+    if (item.type !== 'Task' && item.type !== 'Story' && item.type !== 'Bug') return
     setSearchParams({ selectedIssue: item.id })
   }
 
   return (
-    <div className="flex h-full flex-col bg-white overflow-hidden select-none">
+    <div className="relative flex h-full flex-col overflow-hidden bg-white select-none">
       {/* 1. TIMELINE TOOLBAR (Search, Avatars, Filters) */}
       <div className="flex h-11 shrink-0 items-center gap-3 border-b border-slate-200 px-5">
         <div className="relative w-60">
@@ -326,9 +342,8 @@ export default function Timeline() {
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         </div>
 
-        {/* User Avatars Filter */}
         <div className="flex items-center -space-x-1.5 overflow-hidden pl-1">
-          {users.slice(0, 5).map((u) => (
+          {members.slice(0, 4).map((u) => (
             <button
               key={u.id}
               onClick={() => setAssigneeFilter(assigneeFilter === u.id ? null : u.id)}
@@ -338,12 +353,12 @@ export default function Timeline() {
               )}
               title={u.name}
             >
-              <Avatar user={u} size={22} />
+              <Avatar user={u} size={24} />
             </button>
           ))}
-          {users.length > 5 && (
-            <span className="flex h-5 items-center justify-center rounded-full bg-slate-100 px-1 text-[9px] font-semibold text-slate-600 ring-2 ring-white">
-              +{users.length - 5}
+          {members.length > 4 && (
+            <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold text-slate-600 ring-2 ring-white">
+              +{members.length - 4}
             </span>
           )}
         </div>
@@ -387,23 +402,23 @@ export default function Timeline() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left Table + Center Gantt Timeline */}
         <div className="flex min-w-0 flex-1 overflow-hidden">
-          {/* LEFT TABLE: Work (180px), Status (70px), Assignee (100px) */}
-          <div className="flex w-[350px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-2xs z-10">
-            {/* Table Header */}
+          <div className="flex w-[520px] shrink-0 flex-col border-r border-slate-200 bg-white z-10">
             <div
-              className="grid grid-cols-[1fr_70px_100px] items-center border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold text-slate-600"
+              className="grid grid-cols-[minmax(0,1fr)_88px_118px] items-center border-b border-slate-200 bg-[#f7f8f9] text-[12px] font-semibold text-slate-600"
               style={{ height: ROW_H }}
             >
               <div className="flex items-center gap-1 px-3">
-                <ChevronRight size={13} className="text-slate-400" />
+                <ChevronRight size={14} className="text-slate-400" />
                 <span>Work</span>
               </div>
               <div className="px-2">Status</div>
               <div className="px-2">Assignee</div>
             </div>
 
-            {/* Sprints Group Heading */}
-            <div className="bg-slate-50/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-100">
+            <div
+              className="flex items-center border-b border-slate-100 bg-white px-3 text-[12px] font-medium text-slate-500"
+              style={{ height: GROUP_H }}
+            >
               Sprints
             </div>
 
@@ -419,21 +434,15 @@ export default function Timeline() {
                     <div
                       onClick={() => handleRowClick(item)}
                       className={clsx(
-                        'group grid grid-cols-[1fr_70px_100px] items-center border-b border-slate-100 text-xs cursor-pointer transition-colors',
-                        isSelected ? 'bg-blue-50/70 font-medium' : 'hover:bg-slate-50',
+                        'group relative grid grid-cols-[minmax(0,1fr)_88px_118px] items-center border-b border-slate-100 text-[13px] cursor-pointer transition-colors',
+                        isSelected ? 'bg-[#e9f2ff]' : 'hover:bg-[#f7f8f9]',
                       )}
                       style={{ height: ROW_H }}
                     >
-                      {/* Work column */}
                       <div
-                        className="flex items-center gap-1.5 min-w-0 pr-1 overflow-hidden"
-                        style={{ paddingLeft: Math.max(6, 6 + depth * 14) }}
+                        className="flex min-w-0 items-center gap-1.5 overflow-hidden pr-2"
+                        style={{ paddingLeft: 8 + depth * 16 }}
                       >
-                        <GripVertical
-                          size={12}
-                          className="text-slate-300 opacity-0 group-hover:opacity-100 shrink-0 cursor-grab"
-                        />
-
                         {hasChildren ? (
                           <button
                             type="button"
@@ -441,34 +450,31 @@ export default function Timeline() {
                               e.stopPropagation()
                               setExpanded((c) => ({ ...c, [item.id]: !c[item.id] }))
                             }}
-                            className="rounded p-0.5 hover:bg-slate-200 shrink-0"
+                            className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200"
                           >
-                            {expanded[item.id] ? (
-                              <ChevronDown size={13} />
-                            ) : (
-                              <ChevronRight size={13} />
-                            )}
+                            {expanded[item.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                           </button>
                         ) : (
-                          <span className="w-3 shrink-0" />
+                          <span className="inline-flex w-[18px] shrink-0 justify-center text-slate-300">
+                            <ChevronRight size={14} />
+                          </span>
                         )}
 
-                        <TypeIcon type={item.type} size={14} />
+                        <TypeIcon type={item.type} size={16} />
 
                         <Link
                           to={`/browse/${item.id}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="shrink-0 text-xs font-semibold text-slate-600 hover:text-blue-600 hover:underline"
+                          className="shrink-0 text-[13px] font-medium text-[#0c66e4] hover:underline"
                         >
                           {item.id}
                         </Link>
 
-                        {/* Inline Editable Summary */}
                         {isEditing ? (
                           <input
                             autoFocus
                             type="text"
-                            className="w-full rounded border border-blue-500 px-1 py-0.5 text-xs text-slate-900 outline-none"
+                            className="min-w-0 flex-1 rounded border border-blue-500 px-1 py-0.5 text-[13px] text-slate-900 outline-none"
                             value={editingSummaryText}
                             onChange={(e) => setEditingSummaryText(e.target.value)}
                             onKeyDown={(e) => {
@@ -481,8 +487,8 @@ export default function Timeline() {
                         ) : (
                           <span
                             className={clsx(
-                              'truncate text-xs text-slate-800',
-                              isDone(item.status) && 'line-through text-slate-400',
+                              'min-w-0 flex-1 truncate text-[13px] text-slate-800',
+                              isDone(item.status) && 'text-slate-400 line-through',
                             )}
                             title={item.summary}
                           >
@@ -490,12 +496,11 @@ export default function Timeline() {
                           </span>
                         )}
 
-                        {/* Hover Action Buttons (Edit, Add, More) */}
                         {!isEditing && (
-                          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 bg-white/90 rounded px-0.5">
+                          <div className="absolute right-[214px] top-1/2 z-10 hidden -translate-y-1/2 items-center gap-0.5 rounded bg-white/95 px-0.5 shadow-sm group-hover:flex">
                             <button
                               type="button"
-                              className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-800"
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800"
                               title="Edit summary"
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -506,7 +511,7 @@ export default function Timeline() {
                             </button>
                             <button
                               type="button"
-                              className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-800"
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800"
                               title="Add child work item"
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -517,7 +522,7 @@ export default function Timeline() {
                             </button>
                             <button
                               type="button"
-                              className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-800"
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800"
                               title="More options"
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -540,7 +545,7 @@ export default function Timeline() {
                       </div>
 
                       {/* Assignee column */}
-                      <div className="relative px-2 min-w-0" onClick={(e) => e.stopPropagation()}>
+                      <div className="relative min-w-0 px-2" data-assignee-menu onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           onClick={() =>
@@ -550,11 +555,13 @@ export default function Timeline() {
                           title={assignee ? assignee.name : 'Unassigned'}
                         >
                           {assignee ? (
-                            <Avatar user={assignee} size={18} />
+                            <Avatar user={assignee} size={20} />
                           ) : (
-                            <User size={13} className="text-slate-400 shrink-0" />
+                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-500">
+                              <User size={12} />
+                            </span>
                           )}
-                          <span className="truncate text-[11px]">
+                          <span className="truncate text-[12px] text-slate-600">
                             {assignee ? assignee.name : 'Unassigned'}
                           </span>
                         </button>
@@ -571,7 +578,7 @@ export default function Timeline() {
                             >
                               Unassigned
                             </button>
-                            {users.map((u) => (
+                            {members.map((u) => (
                               <button
                                 key={u.id}
                                 type="button"
@@ -627,14 +634,13 @@ export default function Timeline() {
               })}
             </div>
 
-            {/* Table Footer: + Create & Count */}
-            <div className="flex h-9 items-center justify-between border-t border-slate-200 px-4 text-xs text-slate-500 bg-slate-50/50 shrink-0">
+            <div className="flex h-10 shrink-0 items-center justify-between border-t border-slate-200 bg-white px-3 text-[13px] text-slate-500">
               <button
                 type="button"
                 onClick={() => openCreate({ projectId: project.id })}
-                className="flex items-center gap-1 font-semibold text-slate-700 hover:text-blue-600"
+                className="flex items-center gap-1 font-medium text-slate-700 hover:text-[#0c66e4]"
               >
-                <Plus size={13} />
+                <Plus size={14} />
                 <span>Create</span>
               </button>
               <span>{rows.length} of {rows.length}</span>
@@ -644,15 +650,14 @@ export default function Timeline() {
           {/* CENTER GANTT TIMELINE CHART */}
           <div ref={scroller} className="flex-1 overflow-x-auto overflow-y-auto bg-white">
             <div style={{ width }} className="relative min-h-full">
-              {/* Header dates row */}
               <div
-                className="relative border-b border-slate-200 bg-slate-50/80"
+                className="relative border-b border-slate-200 bg-[#f7f8f9]"
                 style={{ height: ROW_H }}
               >
                 {headers.map((h) => (
                   <div
                     key={h.d.toISOString()}
-                    className="absolute top-0 h-full border-l border-slate-200 px-2.5 pt-2 text-xs font-semibold text-slate-600 select-none"
+                    className="absolute top-0 h-full border-l border-slate-200 px-3 pt-2.5 text-[13px] font-semibold text-slate-700 select-none"
                     style={{ left: x(h.d) }}
                   >
                     {h.label}
@@ -660,13 +665,25 @@ export default function Timeline() {
                 ))}
               </div>
 
-              {/* Today line indicator */}
               <div
-                className="absolute bottom-0 top-[38px] z-20 w-0.5 bg-blue-600"
-                style={{ left: x(today) }}
+                className="relative border-b border-slate-100 bg-white"
+                style={{ height: GROUP_H }}
+              >
+                {headers.map((h) => (
+                  <div
+                    key={h.d.toISOString()}
+                    className="absolute top-0 h-full border-l border-slate-100"
+                    style={{ left: x(h.d) }}
+                  />
+                ))}
+              </div>
+
+              <div
+                className="absolute bottom-0 z-20 w-px bg-[#0c66e4]"
+                style={{ left: x(today), top: ROW_H }}
                 title="Today"
               >
-                <div className="absolute -top-1 -left-[3px] h-2 w-2 rounded-full bg-blue-600" />
+                <div className="absolute -top-[5px] left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 bg-[#0c66e4]" />
               </div>
 
               {/* Rows Bars */}
@@ -699,15 +716,15 @@ export default function Timeline() {
 
                     {s && e && (
                       <div
-                        title={`${item.id}: ${item.summary} (${format(s, 'dd MMM')} – ${format(e, 'dd MMM')})`}
+                        title={`${item.id} ${item.summary} (${format(s, 'dd MMM')} – ${format(e, 'dd MMM')})`}
                         className="absolute top-2 flex h-5 items-center gap-1.5 overflow-hidden rounded px-2 text-[11px] font-medium text-white shadow-2xs hover:brightness-110 transition-all"
                         style={{
                           left: x(s),
-                          width: Math.max(px * 3, (differenceInCalendarDays(e, s) + 1) * px),
+                          width: Math.max(px * 4, (differenceInCalendarDays(e, s) + 1) * px),
                           background: item.type === 'Epic' ? '#8f7ee7' : '#0c66e4',
                         }}
                       >
-                        <span className="truncate">{item.summary}</span>
+                        <span className="truncate">{item.id} {item.summary}</span>
                       </div>
                     )}
                   </div>
@@ -718,50 +735,48 @@ export default function Timeline() {
         </div>
 
         {/* 3. RIGHT JIRA WORK ITEM DETAIL DRAWER */}
-        {selectedIssueId && (
-          <WorkItemDrawer
-            itemId={selectedIssueId}
-            onClose={() => {
-              searchParams.delete('selectedIssue')
-              setSearchParams(searchParams)
-            }}
-          />
-        )}
+        {selectedIssueId && (() => {
+          const opened = allItems.find((i) => i.id === selectedIssueId)
+          if (!opened || (opened.type !== 'Task' && opened.type !== 'Story' && opened.type !== 'Bug')) return null
+          return (
+            <WorkItemDrawer
+              itemId={selectedIssueId}
+              onClose={() => {
+                searchParams.delete('selectedIssue')
+                setSearchParams(searchParams)
+              }}
+            />
+          )
+        })()}
       </div>
 
       {/* 4. BOTTOM VIEW SWITCHER BAR (Today, Weeks, Months, Quarters) */}
-      <div className="flex h-11 shrink-0 items-center justify-center border-t border-slate-200 bg-white px-6">
-        <div className="flex items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs">
+      <div className="pointer-events-none absolute bottom-3 left-[520px] right-0 z-30 flex justify-center">
+        <div className="pointer-events-auto flex items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-md">
           <button
             type="button"
             onClick={scrollToday}
-            className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded"
+            className="rounded px-2.5 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-100"
           >
             Today
           </button>
-          <div className="h-3.5 w-px bg-slate-200 mx-0.5" />
+          <div className="mx-0.5 h-4 w-px bg-slate-200" />
           {(['weeks', 'months', 'quarters'] as Zoom[]).map((z) => (
             <button
               key={z}
               type="button"
               onClick={() => setZoom(z)}
               className={clsx(
-                'px-2.5 py-1 text-xs font-semibold capitalize rounded transition-colors',
-                zoom === z
-                  ? 'bg-blue-50 text-blue-700 border border-blue-200 font-bold'
-                  : 'text-slate-600 hover:bg-slate-100',
+                'rounded px-2.5 py-1 text-[13px] font-medium capitalize',
+                zoom === z ? 'bg-[#e9f2ff] text-[#0c66e4]' : 'text-slate-600 hover:bg-slate-100',
               )}
             >
               {z}
             </button>
           ))}
-          <div className="h-3.5 w-px bg-slate-200 mx-0.5" />
-          <button
-            type="button"
-            className="p-1 text-slate-400 hover:text-slate-600"
-            title="Timeline information"
-          >
-            <Info size={13} />
+          <div className="mx-0.5 h-4 w-px bg-slate-200" />
+          <button type="button" className="p-1 text-slate-400 hover:text-slate-600" title="Timeline information">
+            <Info size={14} />
           </button>
         </div>
       </div>

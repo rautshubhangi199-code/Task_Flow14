@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { useCurrentUser } from '../../store/hooks'
 import { canAccessSettings } from '../../lib/permissions'
@@ -15,12 +15,14 @@ const ATLASSIAN_ADMIN = [{ to: '/settings/users', label: 'User management' }]
 
 export default function SettingsLayout() {
   const user = useCurrentUser()
+  const location = useLocation()
+  const workItems = location.pathname.includes('/settings/work-items')
   if (!canAccessSettings(user)) {
     return <Navigate to="/for-you" replace />
   }
   return (
     <div className="flex min-h-full flex-col md:flex-row">
-      <aside className="w-full shrink-0 border-b border-slate-200 bg-slate-50 md:w-56 md:border-b-0 md:border-r">
+      {!workItems && <aside className="w-full shrink-0 border-b border-slate-200 bg-slate-50 md:w-56 md:border-b-0 md:border-r">
         <div className="px-4 py-4 text-sm font-semibold text-slate-800">Settings</div>
         <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Jira admin</div>
         {JIRA_ADMIN.map((l) => (
@@ -34,7 +36,7 @@ export default function SettingsLayout() {
             {l.label}
           </NavLink>
         ))}
-      </aside>
+      </aside>}
       <div className="min-w-0 flex-1">
         <Outlet />
       </div>
