@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bot, ChevronDown, ChevronRight, Eye, EyeOff, GitBranch, Link2, Plus, Settings, Star, Trash2, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Eye, EyeOff, GitBranch, Link2, Plus, Settings, Star, Trash2, X, Zap } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useAccessibleItems, useAccessibleProjects, useCurrentUser } from '../store/hooks'
 import { useUi } from '../store/uiStore'
 import { commentService, workItemService, worklogService } from '../services/api'
 import { LINK_TYPES, PRIORITIES, TEAMS, type IssueType, type LinkType, type Priority, type WorkItem } from '../types'
 import { ALLOWED_PARENTS, findEpicAncestor, fmtDate, formatDuration, isDone, parseDuration, timeAgo, todayStr } from '../lib/utils'
-import { Avatar, EmptyState, PriorityIcon, ProgressBar, StatusBadge, Tabs, TypeIcon } from '../components/ui'
+import { Avatar, Dropdown, EmptyState, MenuItem, PriorityIcon, ProgressBar, StatusBadge, Tabs, TypeIcon } from '../components/ui'
 import { StatusDropdown } from '../components/StatusDropdown'
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -81,7 +81,6 @@ function Detail({ item }: { item: WorkItem }) {
   const project = projects.find((p) => p.id === item.projectId)!
   const parent = allItems.find((i) => i.id === item.parentId)
   const epic = findEpicAncestor(allItems, item)
-  const crumbParent = item.type === 'Epic' ? undefined : (epic ?? parent)
   const children = allItems.filter((i) => i.parentId === item.id)
   const members = users.filter((u) => project.memberIds.includes(u.id) || project.leadId === u.id)
   const update = (patch: Partial<WorkItem>) => workItemService.update(item.id, patch)
@@ -117,8 +116,45 @@ function Detail({ item }: { item: WorkItem }) {
   const isStarred = (starred[me.id] ?? []).includes(item.id)
   const watching = item.watcherIds.includes(me.id)
   const parentOptions = allItems.filter((i) => i.projectId === item.projectId && i.id !== item.id && !descendants.includes(i.id) && ALLOWED_PARENTS[item.type].includes(i.type))
-  const childType: IssueType = item.type === 'Epic' ? 'Story' : 'Subtask'
   const canHaveChildren = item.type !== 'Subtask'
+  const [epicQ, setEpicQ] = useState('')
+  const [newEpicName, setNewEpicName] = useState('')
+  const epicChoices = allItems.filter((i) => i.projectId === item.projectId && i.type === 'Epic' && i.id !== item.id)
+  const visibleEpics = epicChoices.filter((e) => {
+    const q = epicQ.trim().toLowerCase()
+    if (!q) return true
+    return e.id.toLowerCase().includes(q) || e.summary.toLowerCase().includes(q)
+  })
+  const attachEpic = (epicId: string) => {
+    update({ parentId: epicId })
+    setEpicQ('')
+    showToast(`Added to ${epicId}`)
+  }
+  const createAndAttachEpic = async () => {
+    const name = newEpicName.trim() || epicQ.trim()
+    if (!name) return
+    const epic = await workItemService.create({
+      projectId: item.projectId,
+      type: 'Epic',
+      summary: name,
+      description: '',
+      status: 'To Do',
+      priority: 'Medium',
+      originalEstimate: null,
+      assigneeId: null,
+      reporterId: me.id,
+      labels: [],
+      parentId: null,
+      dueDate: null,
+      startDate: null,
+      team: item.team,
+      sprintId: null,
+      storyPoints: null,
+    })
+    attachEpic(epic.id)
+    setNewEpicName('')
+  }
+  const openChildCreate = (t: IssueType) => openCreate({ projectId: item.projectId, parentId: item.id, type: t, sprintId: item.sprintId })
 
   const userBy = (uid: string | null) => users.find((u) => u.id === uid)
 
@@ -209,11 +245,80 @@ function Detail({ item }: { item: WorkItem }) {
         <Link to="/spaces" className="hover:underline">Spaces</Link>
         <span>/</span>
         <Link to={`/projects/${project.key}/summary`} className="flex items-center gap-1 hover:underline">{project.icon} {project.name}</Link>
-        {crumbParent && (
+        {(item.type === 'Task' || item.type === 'Story' || item.type === 'Bug') && (
           <>
             <span>/</span>
-            <Link to={`/browse/${crumbParent.id}`} className="flex items-center gap-1 hover:underline">
-              <TypeIcon type={crumbParent.type} size={14} /> {crumbParent.id}
+            {epic ? (
+              <Link to={`/browse/${epic.id}`} className="flex items-center gap-1 hover:underline">
+                <TypeIcon type="Epic" size={14} /> {epic.id}
+              </Link>
+            ) : (
+              <Dropdown
+                trigger={(open) => (
+                  <button
+                    type="button"
+                    className={clsx('inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-slate-100', open && 'bg-slate-100')}
+                  >
+                    <Zap size={14} className="text-purple-600" />
+                    <span>Add epic</span>
+                  </button>
+                )}
+              >
+                {(close) => (
+                  <div className="w-72 p-2" onMouseDown={(e) => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      className="input py-1 text-sm"
+                      placeholder="Search epics"
+                      value={epicQ}
+                      onChange={(e) => setEpicQ(e.target.value)}
+                    />
+                    <div className="mt-1 max-h-48 overflow-auto">
+                      {visibleEpics.map((e) => (
+                        <MenuItem
+                          key={e.id}
+                          onClick={() => { attachEpic(e.id); close() }}
+                        >
+                          <TypeIcon type="Epic" size={14} /> {e.id} · {e.summary}
+                        </MenuItem>
+                      ))}
+                      {visibleEpics.length === 0 && <div className="px-2 py-2 text-sm text-slate-400">No epics</div>}
+                    </div>
+                    <div className="mt-1 border-t border-slate-100 pt-1">
+                      <input
+                        className="input mb-1 py-1 text-sm"
+                        placeholder="New epic name"
+                        value={newEpicName}
+                        onChange={(e) => setNewEpicName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { void createAndAttachEpic(); close() } }}
+                      />
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100"
+                        onClick={() => { void createAndAttachEpic().then(close) }}
+                      >
+                        <TypeIcon type="Epic" size={14} /> Create epic
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Dropdown>
+            )}
+          </>
+        )}
+        {item.type === 'Subtask' && parent && (
+          <>
+            {epic && (
+              <>
+                <span>/</span>
+                <Link to={`/browse/${epic.id}`} className="flex items-center gap-1 hover:underline">
+                  <TypeIcon type="Epic" size={14} /> {epic.id}
+                </Link>
+              </>
+            )}
+            <span>/</span>
+            <Link to={`/browse/${parent.id}`} className="flex items-center gap-1 hover:underline">
+              <TypeIcon type={parent.type} size={14} /> {parent.id}
             </Link>
           </>
         )}
@@ -250,7 +355,26 @@ function Detail({ item }: { item: WorkItem }) {
           )}
 
           <div className="flex gap-2">
-            {canHaveChildren && <button className="btn-default" onClick={() => openCreate({ projectId: item.projectId, parentId: item.id, type: childType, sprintId: item.sprintId })}><Plus size={14} /> Add {item.type === 'Epic' ? 'child' : 'subtask'}</button>}
+            {item.type === 'Epic' && (
+              <Dropdown
+                trigger={() => (
+                  <button type="button" className="btn-default"><Plus size={14} /> Add child <ChevronDown size={14} /></button>
+                )}
+              >
+                {(close) => (
+                  <>
+                    {(['Task', 'Story', 'Bug'] as const).map((t) => (
+                      <MenuItem key={t} onClick={() => { openChildCreate(t); close() }}>
+                        <TypeIcon type={t} size={14} /> {t}
+                      </MenuItem>
+                    ))}
+                  </>
+                )}
+              </Dropdown>
+            )}
+            {(item.type === 'Task' || item.type === 'Story' || item.type === 'Bug') && (
+              <button className="btn-default" onClick={() => openChildCreate('Subtask')}><Plus size={14} /> Add subtask</button>
+            )}
             <button className="btn-default" onClick={() => setShowLinkForm(true)}><Link2 size={14} /> Link work item</button>
           </div>
 

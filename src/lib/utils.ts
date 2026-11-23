@@ -89,12 +89,12 @@ export function findEpicAncestor(items: WorkItem[], item: WorkItem | undefined):
   return undefined
 }
 
-/** Allowed parent types for each work item type (Epic > Story > Task > Subtask). */
+/** Allowed parent types (Jira): Epic → Task/Story/Bug; Task/Story/Bug → Subtask. */
 export const ALLOWED_PARENTS: Record<IssueType, IssueType[]> = {
   Epic: [],
   Story: ['Epic'],
-  Task: ['Epic', 'Story'],
-  Bug: ['Epic', 'Story'],
+  Task: ['Epic'],
+  Bug: ['Epic'],
   Subtask: ['Story', 'Task', 'Bug'],
 }
 

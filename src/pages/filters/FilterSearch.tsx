@@ -13,6 +13,7 @@ import {
   Copy,
   Ellipsis,
   MessageSquare,
+  RotateCcw,
   Search,
   Sparkles,
   Star,
@@ -26,9 +27,9 @@ import { useUi } from '../../store/uiStore'
 import { filterService, workItemService } from '../../services/api'
 import { DEFAULT_FILTERS, JqlError, quoteValue, runJql, sortItems, type SortSpec } from '../../lib/jql'
 import { useJqlContext } from '../../lib/useJqlContext'
-import { fmtDate, isDone, STATUS_STYLE, timeAgo, userName } from '../../lib/utils'
+import { fmtDate, formatDuration, isDone, STATUS_STYLE, timeAgo, userName } from '../../lib/utils'
 import { ISSUE_TYPES, PRIORITIES, STATUSES, type Priority, type Status } from '../../types'
-import { Avatar, Dropdown, MenuItem, Modal, PriorityIcon, TypeIcon } from '../../components/ui'
+import { Avatar, Dropdown, MenuItem, Modal, PriorityIcon, ProjectIcon, TypeIcon } from '../../components/ui'
 import { StatusDropdown } from '../../components/StatusDropdown'
 
 const MORE_FIELDS = [
@@ -46,6 +47,63 @@ const MORE_FIELDS = [
 ] as const
 
 type MoreField = (typeof MORE_FIELDS)[number]['id']
+type CellField = 'resolution' | 'created' | 'updated' | 'dueDate'
+
+function isoToDatetimeLocal(iso: string) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function datetimeLocalToIso(v: string) {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+const fieldBtn = 'w-full rounded-[3px] px-1.5 py-1 text-left text-[14px] hover:bg-white'
+const fieldFocus = 'h-8 w-full rounded-[3px] border-2 border-[#4c9aff] bg-white px-1.5 text-[14px] text-[#172b4d] outline-none'
+
+const DEFAULT_VISIBLE_COLS = {
+  assignee: true,
+  reporter: true,
+  priority: true,
+  status: true,
+  resolution: true,
+  created: true,
+  updated: true,
+  dueDate: true,
+  space: true,
+  timeSpent: false,
+  originalEstimate: false,
+  comment: false,
+  sprint: false,
+  labels: false,
+  parent: false,
+  startDate: false,
+  endDate: false,
+}
+
+const COLUMN_OPTIONS = [
+  ['assignee', 'Assignee'],
+  ['reporter', 'Reporter'],
+  ['priority', 'Priority'],
+  ['status', 'Status'],
+  ['resolution', 'Resolution'],
+  ['created', 'Created'],
+  ['updated', 'Updated'],
+  ['dueDate', 'Due date'],
+  ['space', 'Space'],
+  ['timeSpent', 'Time spent'],
+  ['originalEstimate', 'Original estimate'],
+  ['comment', 'Comment'],
+  ['sprint', 'Sprint'],
+  ['labels', 'Labels'],
+  ['parent', 'Parent'],
+  ['startDate', 'Start date'],
+  ['endDate', 'End date'],
+] as const
 
 function Chip({
   label,
@@ -94,6 +152,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const users = useStore((s) => s.users)
   const sprints = useStore((s) => s.sprints)
   const worklogs = useStore((s) => s.worklogs)
+  const allComments = useStore((s) => s.comments)
   const savedFilters = useStore((s) => s.savedFilters)
   const showToast = useUi((s) => s.showToast)
   const ctx = useJqlContext()
@@ -145,16 +204,9 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const [reporterPos, setReporterPos] = useState({ top: 0, left: 0 })
   const [priorityId, setPriorityId] = useState<string | null>(null)
   const [priorityPos, setPriorityPos] = useState({ top: 0, left: 0 })
-  const [visibleCols, setVisibleCols] = useState({
-    assignee: true,
-    reporter: true,
-    priority: true,
-    status: true,
-    resolution: true,
-    created: true,
-    updated: true,
-    dueDate: true,
-  })
+  const [cellEdit, setCellEdit] = useState<{ id: string; field: CellField } | null>(null)
+  const [visibleCols, setVisibleCols] = useState({ ...DEFAULT_VISIBLE_COLS })
+  const [colQ, setColQ] = useState('')
 
   const labels = useMemo(() => [...new Set(items.flatMap((i) => i.labels))].sort(), [items])
   const parents = useMemo(() => items.filter((i) => i.type === 'Epic' || i.type === 'Story'), [items])
@@ -163,6 +215,14 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
     for (const w of worklogs) m.set(w.itemId, (m.get(w.itemId) ?? 0) + w.minutes)
     return m
   }, [worklogs])
+  const latestComment = useMemo(() => {
+    const m = new Map<string, string>()
+    const sorted = [...allComments].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    for (const c of sorted) if (!m.has(c.itemId)) m.set(c.itemId, c.body)
+    return m
+  }, [allComments])
+  const colOnCount = COLUMN_OPTIONS.filter(([c]) => visibleCols[c]).length
+  const visibleColOptions = COLUMN_OPTIONS.filter(([, label]) => !colQ.trim() || label.toLowerCase().includes(colQ.trim().toLowerCase()))
   const storyPointOptions = useMemo(
     () => [...new Set(items.map((i) => i.storyPoints).filter((n): n is number => n != null))].sort((a, b) => a - b),
     [items],
@@ -280,16 +340,17 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   }
 
   useEffect(() => {
-    if (!assigningId && !reporterCardId && !priorityId) return
+    if (!assigningId && !reporterCardId && !priorityId && !cellEdit) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement
       if (assigningId && !t.closest('[data-assignee-picker]')) setAssigningId(null)
       if (reporterCardId && !t.closest('[data-reporter-card]')) setReporterCardId(null)
       if (priorityId && !t.closest('[data-priority-picker]')) setPriorityId(null)
+      if (cellEdit && !t.closest('[data-cell-edit]')) setCellEdit(null)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [assigningId, reporterCardId, priorityId])
+  }, [assigningId, reporterCardId, priorityId, cellEdit])
 
   const openAssignee = (itemId: string, currentName: string, el: HTMLElement) => {
     const r = el.getBoundingClientRect()
@@ -686,7 +747,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[1580px] table-fixed border-collapse">
+        <table className="w-full min-w-[1760px] table-fixed border-collapse [&_th]:border [&_th]:border-[#dfe1e6] [&_td]:border [&_td]:border-[#dfe1e6]">
           <thead className="sticky top-0 z-10 bg-white">
             <tr className="text-[12px] font-semibold text-[#6b778c]">
               <th className="w-10 border-b border-[#dfe1e6] px-3 py-2.5 text-left">
@@ -723,9 +784,19 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                 </th>
               )}
               {visibleCols.dueDate && <th className="w-[8%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Due date</th>}
+              {visibleCols.space && <th className="w-[14%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Space</th>}
+              {visibleCols.timeSpent && <th className="w-[8%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Time spent</th>}
+              {visibleCols.originalEstimate && <th className="w-[10%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Original estimate</th>}
+              {visibleCols.comment && <th className="w-[12%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Comment</th>}
+              {visibleCols.sprint && <th className="w-[10%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Sprint</th>}
+              {visibleCols.labels && <th className="w-[10%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Labels</th>}
+              {visibleCols.parent && <th className="w-[10%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Parent</th>}
+              {visibleCols.startDate && <th className="w-[8%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">Start date</th>}
+              {visibleCols.endDate && <th className="w-[8%] border-b border-[#dfe1e6] px-2 py-2.5 text-left">End date</th>}
               <th className="w-10 border-b border-[#dfe1e6] px-1 py-2.5 text-right">
                 <Dropdown
                   align="right"
+                  menuClassName="!w-[280px] !p-0 overflow-hidden"
                   trigger={() => (
                     <button type="button" className="rounded p-1 text-[#6b778c] hover:bg-[#f1f2f4]" title="Columns">
                       <Columns3 size={16} />
@@ -733,26 +804,60 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                   )}
                 >
                   {() => (
-                    <>
-                      {([
-                        ['assignee', 'Assignee'],
-                        ['reporter', 'Reporter'],
-                        ['priority', 'Priority'],
-                        ['status', 'Status'],
-                        ['resolution', 'Resolution'],
-                        ['created', 'Created'],
-                        ['updated', 'Updated'],
-                        ['dueDate', 'Due date'],
-                      ] as const).map(([c, label]) => (
-                        <MenuItem
-                          key={c}
-                          active={visibleCols[c]}
-                          onClick={() => setVisibleCols((v) => ({ ...v, [c]: !v[c] }))}
+                    <div className="flex max-h-[420px] flex-col">
+                      <div className="flex items-center justify-between border-b border-[#dfe1e6] px-3 py-2">
+                        <span className="text-[14px] font-medium text-[#0c66e4]">My defaults</span>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-[#6b778c] hover:bg-[#f1f2f4]"
+                          title="Restore defaults"
+                          onClick={() => { setVisibleCols({ ...DEFAULT_VISIBLE_COLS }); setColQ('') }}
                         >
-                          {visibleCols[c] ? '✓ ' : ''}{label}
-                        </MenuItem>
-                      ))}
-                    </>
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-2 rounded-md border-2 border-[#0c66e4] bg-white px-2 py-1.5">
+                          <Search size={14} className="shrink-0 text-[#6b778c]" />
+                          <input
+                            autoFocus
+                            className="min-w-0 flex-1 bg-transparent text-[14px] text-[#172b4d] outline-none"
+                            placeholder="Search columns"
+                            value={colQ}
+                            onChange={(e) => setColQ(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-auto py-1">
+                        {visibleColOptions.map(([c, label]) => (
+                          <label
+                            key={c}
+                            className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-[14px] text-[#172b4d] hover:bg-[#f4f5f7]"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={visibleCols[c]}
+                              onChange={() => setVisibleCols((v) => ({ ...v, [c]: !v[c] }))}
+                              className="h-3.5 w-3.5 accent-[#0c66e4]"
+                            />
+                            {label}
+                          </label>
+                        ))}
+                        {visibleColOptions.length === 0 && (
+                          <div className="px-3 py-2 text-[13px] text-[#6b778c]">No columns match</div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between border-t border-[#dfe1e6] px-3 py-2 text-[12px] text-[#6b778c]">
+                        <button
+                          type="button"
+                          className="hover:underline"
+                          onClick={() => { setVisibleCols({ ...DEFAULT_VISIBLE_COLS }); setColQ('') }}
+                        >
+                          Restore defaults
+                        </button>
+                        <span>{colOnCount} of {COLUMN_OPTIONS.length}</span>
+                      </div>
+                    </div>
                   )}
                 </Dropdown>
               </th>
@@ -763,6 +868,10 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
               const assignee = users.find((u) => u.id === i.assigneeId)
               const reporter = users.find((u) => u.id === i.reporterId)
               const project = projects.find((p) => p.id === i.projectId)
+              const parentItem = items.find((p) => p.id === i.parentId)
+              const sprint = sprints.find((s) => s.id === i.sprintId)
+              const spent = spentByItem.get(i.id) ?? 0
+              const commentText = latestComment.get(i.id)
               const statusStyle = STATUS_STYLE[i.status] ?? 'bg-slate-100 text-slate-700'
               const editing = editingId === i.id
               return (
@@ -1001,20 +1110,168 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                     </td>
                   )}
                   {visibleCols.resolution && (
-                    <td className="border-b border-[#ebecf0] px-2 py-2 text-[14px] text-[#44546f]">{isDone(i.status) ? 'Done' : 'Unresolved'}</td>
+                    <td className="border-b border-[#ebecf0] px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                      {cellEdit?.id === i.id && cellEdit.field === 'resolution' ? (
+                        <select
+                          data-cell-edit
+                          autoFocus
+                          className={fieldFocus}
+                          value={isDone(i.status) ? 'Done' : 'Unresolved'}
+                          onChange={(e) => {
+                            workItemService.update(i.id, { status: e.target.value === 'Done' ? 'Done' : 'To Do' })
+                            setCellEdit(null)
+                          }}
+                          onBlur={() => setCellEdit(null)}
+                        >
+                          <option>Unresolved</option>
+                          <option>Done</option>
+                        </select>
+                      ) : (
+                        <button type="button" className={`${fieldBtn} text-[#44546f]`} onClick={() => setCellEdit({ id: i.id, field: 'resolution' })}>
+                          {isDone(i.status) ? 'Done' : 'Unresolved'}
+                        </button>
+                      )}
+                    </td>
                   )}
                   {visibleCols.created && (
-                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
-                      {fmtDate(i.createdAt, 'MMM d, yyyy, h:mm a')}
+                    <td className="border-b border-[#ebecf0] px-2 py-1.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {cellEdit?.id === i.id && cellEdit.field === 'created' ? (
+                        <input
+                          data-cell-edit
+                          autoFocus
+                          type="datetime-local"
+                          className={fieldFocus}
+                          defaultValue={isoToDatetimeLocal(i.createdAt)}
+                          onBlur={() => setCellEdit(null)}
+                          onKeyDown={(e) => e.key === 'Escape' && setCellEdit(null)}
+                        />
+                      ) : (
+                        <button type="button" className={`${fieldBtn} text-[#172b4d]`} onClick={() => setCellEdit({ id: i.id, field: 'created' })}>
+                          {fmtDate(i.createdAt, 'MMM d, yyyy, h:mm a')}
+                        </button>
+                      )}
                     </td>
                   )}
                   {visibleCols.updated && (
-                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
-                      {fmtDate(i.updatedAt, 'MMM d, yyyy, h:mm a')}
+                    <td className="border-b border-[#ebecf0] px-2 py-1.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {cellEdit?.id === i.id && cellEdit.field === 'updated' ? (
+                        <input
+                          data-cell-edit
+                          autoFocus
+                          type="datetime-local"
+                          className={fieldFocus}
+                          defaultValue={isoToDatetimeLocal(i.updatedAt)}
+                          onChange={(e) => {
+                            const iso = datetimeLocalToIso(e.target.value)
+                            if (iso) workItemService.update(i.id, { updatedAt: iso })
+                          }}
+                          onBlur={() => setCellEdit(null)}
+                          onKeyDown={(e) => e.key === 'Escape' && setCellEdit(null)}
+                        />
+                      ) : (
+                        <button type="button" className={`${fieldBtn} text-[#172b4d]`} onClick={() => setCellEdit({ id: i.id, field: 'updated' })}>
+                          {fmtDate(i.updatedAt, 'MMM d, yyyy, h:mm a')}
+                        </button>
+                      )}
                     </td>
                   )}
                   {visibleCols.dueDate && (
-                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#6b778c]">
+                    <td className="border-b border-[#ebecf0] px-2 py-1.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {cellEdit?.id === i.id && cellEdit.field === 'dueDate' ? (
+                        <input
+                          data-cell-edit
+                          autoFocus
+                          type="date"
+                          className={fieldFocus}
+                          defaultValue={i.dueDate ?? ''}
+                          onChange={(e) => {
+                            workItemService.update(i.id, { dueDate: e.target.value || null })
+                            setCellEdit(null)
+                          }}
+                          onBlur={() => setCellEdit(null)}
+                          onKeyDown={(e) => e.key === 'Escape' && setCellEdit(null)}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className={`${fieldBtn} ${i.dueDate ? 'text-[#172b4d]' : 'text-[#6b778c]'}`}
+                          onClick={() => setCellEdit({ id: i.id, field: 'dueDate' })}
+                        >
+                          {i.dueDate ? fmtDate(i.dueDate, 'MMM d, yyyy') : 'Add due date'}
+                        </button>
+                      )}
+                    </td>
+                  )}
+                  {visibleCols.space && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      {project ? (
+                        <button
+                          type="button"
+                          className="inline-flex max-w-full items-center gap-2 text-left"
+                          onClick={() => navigate(`/projects/${project.key}/summary`)}
+                        >
+                          <ProjectIcon icon={project.icon} size={20} />
+                          <span className="truncate text-[14px] font-medium text-[#0c66e4] hover:underline">{project.name}</span>
+                        </button>
+                      ) : (
+                        <span className="text-[14px] text-[#6b778c]">—</span>
+                      )}
+                    </td>
+                  )}
+                  {visibleCols.timeSpent && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
+                      {spent ? formatDuration(spent) : '—'}
+                    </td>
+                  )}
+                  {visibleCols.originalEstimate && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
+                      {i.originalEstimate ? formatDuration(i.originalEstimate) : '—'}
+                    </td>
+                  )}
+                  {visibleCols.comment && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 text-[14px] text-[#172b4d]">
+                      <span className="line-clamp-2">{commentText || '—'}</span>
+                    </td>
+                  )}
+                  {visibleCols.sprint && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 text-[14px] text-[#172b4d]">{sprint?.name ?? 'None'}</td>
+                  )}
+                  {visibleCols.labels && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2">
+                      {i.labels.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {i.labels.map((l) => (
+                            <span key={l} className="rounded-sm border border-slate-300 bg-white px-1.5 py-0.5 text-[12px] text-[#172b4d]">{l}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[14px] text-[#6b778c]">None</span>
+                      )}
+                    </td>
+                  )}
+                  {visibleCols.parent && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      {parentItem ? (
+                        <button
+                          type="button"
+                          className="inline-flex max-w-full items-center gap-1.5 text-left"
+                          onClick={() => navigate(`/browse/${parentItem.id}`)}
+                        >
+                          <TypeIcon type={parentItem.type} size={14} />
+                          <span className="truncate text-[14px] font-medium text-[#0c66e4] hover:underline">{parentItem.id}</span>
+                        </button>
+                      ) : (
+                        <span className="text-[14px] text-[#6b778c]">None</span>
+                      )}
+                    </td>
+                  )}
+                  {visibleCols.startDate && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
+                      {i.startDate ? fmtDate(i.startDate, 'MMM d, yyyy') : 'None'}
+                    </td>
+                  )}
+                  {visibleCols.endDate && (
+                    <td className="border-b border-[#ebecf0] px-2 py-2 whitespace-nowrap text-[14px] text-[#172b4d]">
                       {i.dueDate ? fmtDate(i.dueDate, 'MMM d, yyyy') : 'None'}
                     </td>
                   )}

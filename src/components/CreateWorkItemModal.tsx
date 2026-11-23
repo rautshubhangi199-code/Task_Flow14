@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  Calendar, Check, ChevronDown, GitFork, Hash, Link2, MessageSquare, MoreHorizontal, PanelTop, PictureInPicture2,
+  Calendar, Check, ChevronDown, Hash, Link2, MessageSquare, MoreHorizontal, PanelTop, PictureInPicture2,
   Plus, Repeat, Shield, Square, Tag, Upload, User, Users, X, Zap,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -28,13 +28,18 @@ type CreateView = 'condensed' | 'full' | 'floating'
 function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemInput>; onClose: () => void }) {
   const me = useCurrentUser()
   const navigate = useNavigate()
+  const location = useLocation()
   const projects = useAccessibleProjects()
   const users = useStore((s) => s.users)
   const items = useStore((s) => s.items)
   const sprints = useStore((s) => s.sprints)
   const showToast = useUi((s) => s.showToast)
+  const spaceFromRoute = useMemo(() => {
+    const key = location.pathname.match(/^\/projects\/([^/]+)/)?.[1]
+    return key ? projects.find((p) => p.key === key) : undefined
+  }, [location.pathname, projects])
 
-  const [projectId, setProjectId] = useState(defaults.projectId ?? projects[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(defaults.projectId ?? spaceFromRoute?.id ?? projects[0]?.id ?? '')
   const [type, setType] = useState<IssueType>(defaults.type ?? 'Story')
   const [status, setStatus] = useState<Status>(defaults.status ?? 'To Do')
   const [extraStatuses, setExtraStatuses] = useState<string[]>([])
@@ -113,9 +118,18 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
     setCreateLabelName('')
     setCreateLabelOpen(false)
   }
+  const parentItem = items.find((i) => i.id === (parentId || defaults.parentId))
+  const lockedParent = Boolean(defaults.parentId)
+  const allowedCreateTypes = useMemo((): IssueType[] => {
+    if (!parentItem) return [...ISSUE_TYPES]
+    if (parentItem.type === 'Epic') return ['Task', 'Story', 'Bug']
+    return ['Subtask']
+  }, [parentItem])
   const parentOptions = useMemo(() => {
-    const allowed = type === 'Subtask' ? ALLOWED_PARENTS.Subtask : (['Epic'] as IssueType[])
-    return items.filter((i) => i.projectId === projectId && allowed.includes(i.type))
+    if (type === 'Subtask') {
+      return items.filter((i) => i.projectId === projectId && ALLOWED_PARENTS.Subtask.includes(i.type))
+    }
+    return items.filter((i) => i.projectId === projectId && i.type === 'Epic')
   }, [items, projectId, type])
   const visibleParents = useMemo(() => {
     const q = parentQ.trim().toLowerCase()
@@ -143,6 +157,10 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
       setCreateLabelName('')
     }
   }, [chip])
+
+  useEffect(() => {
+    if (!allowedCreateTypes.includes(type)) setType(allowedCreateTypes[0] ?? 'Task')
+  }, [allowedCreateTypes, type])
 
   const placeMenu = (el: HTMLElement | null, minWidth = 320) => {
     if (!el) return
@@ -217,7 +235,15 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
     if (busy) return
     if (!projectId) { setError('Select a space'); return }
     if (!summary.trim()) { setError('Add a summary'); return }
-    if (type === 'Subtask' && !parentId) { setError('A subtask needs a parent'); setChip('parent'); return }
+    if (type === 'Subtask' && !parentId) { setError('A subtask needs a parent work item'); setChip('parent'); return }
+    if (parentId) {
+      const p = items.find((i) => i.id === parentId)
+      if (!p || !ALLOWED_PARENTS[type].includes(p.type)) {
+        setError(type === 'Subtask' ? 'Pick a Task, Story, or Bug as the parent' : 'Pick an epic as the parent')
+        setChip('parent')
+        return
+      }
+    }
     setError(null)
     setBusy(true)
     try {
@@ -244,7 +270,7 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
       const item = await workItemService.create(input)
       if (comment.trim()) await commentService.add(item.id, comment.trim())
       for (const id of linkIds) await workItemService.addLink(item.id, linkType, id)
-      showToast(`Created ${item.id} "${item.summary}"`, `/browse/${item.id}`)
+      showToast(`Created ${item.type} ${item.id}`, `/browse/${item.id}`)
       if (createAnother) {
         setCreated((c) => [...c, item.id])
         setSummary('')
@@ -345,8 +371,17 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
       )}
       {chip === 'type' && (
         <Menu>
-          {ISSUE_TYPES.map((t) => (
-            <MenuBtn key={t} active={t === type} onClick={() => { setType(t); setParentId(''); setChip(null) }}>
+          {allowedCreateTypes.map((t) => (
+            <MenuBtn
+              key={t}
+              active={t === type}
+              onClick={() => {
+                setType(t)
+                const p = items.find((i) => i.id === parentId)
+                if (!lockedParent && p && !ALLOWED_PARENTS[t].includes(p.type)) setParentId('')
+                setChip(null)
+              }}
+            >
               <TypeIcon type={t} size={16} /> {t}
             </MenuBtn>
           ))}
@@ -564,9 +599,6 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
             </div>
           </div>
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#0c66e4] text-white">
-              <GitFork size={14} />
-            </span>
             <label className="flex items-center gap-2 text-[13px] text-slate-700">
               <input type="checkbox" checked={showDoneParents} onChange={(e) => setShowDoneParents(e.target.checked)} />
               Show everything marked as done
@@ -586,7 +618,7 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
                 <span className={`mt-1 h-3.5 w-3.5 shrink-0 rounded-sm ${epicSwatch(p.id)}`} />
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 text-[13px] font-medium text-slate-800">
-                    <TypeIcon type={p.type === 'Epic' ? 'Epic' : p.type} size={14} />
+                    <TypeIcon type={p.type} size={14} />
                     {p.id}
                   </span>
                   <span className="mt-0.5 block truncate text-[13px] text-slate-800">{p.summary}</span>
@@ -594,7 +626,7 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
               </button>
             ))}
             {type !== 'Epic' && visibleParents.length === 0 && (
-              <div className="px-3 py-2 text-sm text-slate-500">No epics match</div>
+              <div className="px-3 py-2 text-sm text-slate-500">{type === 'Subtask' ? 'No parent work items match' : 'No epics in this space'}</div>
             )}
           </div>
         </>
@@ -744,9 +776,11 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
       <FieldRow icon={<Tag size={16} />} onClick={(e) => openChip('labels', e, 300)}>
         {labelList.length ? labelList.join(', ') : 'Labels'}
       </FieldRow>
-      <FieldRow icon={<Zap size={16} />} onClick={(e) => openChip('parent', e, 320)}>
-        {parent ? `${parent.id} ${parent.summary}` : 'Parent'}
-      </FieldRow>
+      {type !== 'Epic' && (
+        <FieldRow icon={<Zap size={16} />} onClick={(e) => openChip('parent', e, 320)}>
+          {parent ? `${parent.id} ${parent.summary}` : 'Parent'}
+        </FieldRow>
+      )}
       <FieldRow icon={<Calendar size={16} />} onClick={(e) => openChip('due', e, 280)}>
         {dueDate || 'Due date'}
       </FieldRow>
@@ -766,9 +800,11 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
         <ChipBtn active={chip === 'labels' || labelList.length > 0} onClick={(e) => openChip('labels', e, 300)}>
           <Tag size={14} /> Labels{labelList.length ? ` · ${labelList.length}` : ''}
         </ChipBtn>
-        <ChipBtn active={chip === 'parent' || !!parent} onClick={(e) => openChip('parent', e, 320)}>
-          <Zap size={14} /> {parent ? parent.id : 'Parent'}
-        </ChipBtn>
+        {type !== 'Epic' && (
+          <ChipBtn active={chip === 'parent' || !!parent} onClick={(e) => openChip('parent', e, 320)}>
+            <Zap size={14} /> {parent ? parent.id : 'Parent'}
+          </ChipBtn>
+        )}
         <ChipBtn active={chip === 'due' || !!dueDate} onClick={(e) => openChip('due', e, 280)}>
           <Calendar size={14} /> {dueDate || 'Due date'}
         </ChipBtn>
