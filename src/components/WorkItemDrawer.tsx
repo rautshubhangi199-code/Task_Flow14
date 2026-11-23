@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  ArrowDownUp,
   Bot,
   CheckSquare,
   ChevronDown,
@@ -24,10 +25,10 @@ import {
 import { useStore } from '../store/useStore'
 import { useAccessibleItems, useAccessibleProjects, useCurrentUser } from '../store/hooks'
 import { useUi } from '../store/uiStore'
-import { workItemService, worklogService } from '../services/api'
-import { LINK_TYPES, PRIORITIES, type LinkType, type Priority, type Status } from '../types'
-import { ALLOWED_PARENTS, findEpicAncestor, formatDuration, isDone, parseDuration, todayStr } from '../lib/utils'
-import { Avatar, Dropdown, PriorityIcon, ProgressBar, TypeIcon } from './ui'
+import { commentService, workItemService, worklogService } from '../services/api'
+import { LINK_TYPES, PRIORITIES, STATUSES, type LinkType, type Priority, type Status } from '../types'
+import { ALLOWED_PARENTS, findEpicAncestor, formatDuration, isDone, parseDuration, timeAgo, todayStr } from '../lib/utils'
+import { Avatar, Dropdown, MenuItem, PriorityIcon, ProgressBar, TypeIcon } from './ui'
 import { StatusDropdown } from './StatusDropdown'
 
 interface WorkItemDrawerProps {
@@ -74,6 +75,8 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
   const projects = useAccessibleProjects()
   const users = useStore((s) => s.users)
   const allWorklogs = useStore((s) => s.worklogs)
+  const allComments = useStore((s) => s.comments)
+  const allHistory = useStore((s) => s.history)
   const me = useCurrentUser()
   const showToast = useUi((s) => s.showToast)
 
@@ -119,6 +122,11 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
   const [activePriorityMenu, setActivePriorityMenu] = useState<string | null>(null)
   const [activeAssigneeMenu, setActiveAssigneeMenu] = useState<string | null>(null)
   const drawerRef = useRef<HTMLDivElement>(null)
+  const commentRef = useRef<HTMLTextAreaElement>(null)
+  const [activityView, setActivityView] = useState<'comments' | 'all' | 'history' | 'worklog'>('comments')
+  const [commentDraft, setCommentDraft] = useState('')
+  const [commentFocus, setCommentFocus] = useState(false)
+  const [activityNewest, setActivityNewest] = useState(true)
 
   useEffect(() => {
     if (item) {
@@ -130,6 +138,9 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
       setAddingChild(false)
       setLogOpen(false)
       setMorePanel(null)
+      setCommentDraft('')
+      setCommentFocus(false)
+      setActivityView('comments')
     }
   }, [item?.id])
 
@@ -145,6 +156,14 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
         if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
         e.preventDefault()
         setLogOpen(true)
+      }
+      if (e.key.toLowerCase() === 'm' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const tag = (e.target as HTMLElement)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+        e.preventDefault()
+        setActivityView('comments')
+        setCommentFocus(true)
+        requestAnimationFrame(() => commentRef.current?.focus())
       }
     }
     window.addEventListener('keydown', onKey)
@@ -162,6 +181,30 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
   const addChildLabel = isEpic ? 'Add child' : 'Add subtask'
   const groupedLinks = LINK_TYPES.map((t) => ({ type: t, links: item.links.filter((l) => l.type === t) })).filter((g) => g.links.length)
   const logs = allWorklogs.filter((w) => w.itemId === item.id)
+  const comments = allComments.filter((c) => c.itemId === item.id).sort((a, b) => (
+    activityNewest ? b.createdAt.localeCompare(a.createdAt) : a.createdAt.localeCompare(b.createdAt)
+  ))
+  const history = allHistory.filter((h) => h.itemId === item.id).sort((a, b) => (
+    activityNewest ? b.timestamp.localeCompare(a.timestamp) : a.timestamp.localeCompare(b.timestamp)
+  ))
+  const sortedLogs = [...logs].sort((a, b) => (
+    activityNewest ? b.createdAt.localeCompare(a.createdAt) : a.createdAt.localeCompare(b.createdAt)
+  ))
+
+  const saveComment = () => {
+    if (!commentDraft.trim()) return
+    commentService.add(item.id, commentDraft.trim())
+    setCommentDraft('')
+    setCommentFocus(false)
+    showToast('Comment added')
+  }
+
+  const insertComment = (text: string) => {
+    setActivityView('comments')
+    setCommentDraft(text)
+    setCommentFocus(true)
+    requestAnimationFrame(() => commentRef.current?.focus())
+  }
 
   const openIssue = (id: string) => {
     const next = new URLSearchParams(window.location.search)
@@ -816,10 +859,180 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
           </div>
         </section>
 
-        <section className="mt-5 pb-6">
+        <section className="mt-5">
           <div className="flex items-center gap-2 text-[15px] font-semibold text-slate-900">
             Agent sessions
             <span className="text-xs font-normal text-slate-400">Uses AI. Verify results.</span>
+          </div>
+        </section>
+
+        <section className="mt-6 pb-6">
+          <h3 className="text-[15px] font-semibold text-slate-900">Activity</h3>
+          <div className="mt-2 flex items-center gap-1">
+            <button
+              type="button"
+              className={`rounded-full px-3 py-1 text-[13px] font-medium ${
+                activityView === 'comments' ? 'bg-[#0c66e4] text-white' : 'text-slate-700 hover:bg-slate-100'
+              }`}
+              onClick={() => setActivityView('comments')}
+            >
+              Comments
+            </button>
+            <Dropdown
+              trigger={(open) => (
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-0.5 rounded-full px-3 py-1 text-[13px] font-medium ${
+                    activityView !== 'comments' || open ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  More
+                  <ChevronDown size={14} />
+                </button>
+              )}
+            >
+              {(close) => (
+                <>
+                  <MenuItem active={activityView === 'all'} onClick={() => { setActivityView('all'); close() }}>All</MenuItem>
+                  <MenuItem active={activityView === 'history'} onClick={() => { setActivityView('history'); close() }}>History</MenuItem>
+                  <MenuItem active={activityView === 'worklog'} onClick={() => { setActivityView('worklog'); close() }}>Work log</MenuItem>
+                </>
+              )}
+            </Dropdown>
+            <div className="ml-auto">
+              <Dropdown
+                align="right"
+                trigger={() => (
+                  <button type="button" className="rounded p-1 text-slate-500 hover:bg-slate-100" title={activityNewest ? 'Newest first' : 'Oldest first'}>
+                    <ArrowDownUp size={16} />
+                  </button>
+                )}
+              >
+                {(close) => (
+                  <>
+                    <MenuItem active={activityNewest} onClick={() => { setActivityNewest(true); close() }}>Newest first</MenuItem>
+                    <MenuItem active={!activityNewest} onClick={() => { setActivityNewest(false); close() }}>Oldest first</MenuItem>
+                  </>
+                )}
+              </Dropdown>
+            </div>
+          </div>
+
+          {(activityView === 'comments' || activityView === 'all') && (
+            <div className="mt-3 flex items-start gap-2">
+              <Avatar user={me} size={32} />
+              <div className="min-w-0 flex-1">
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 shadow-[0_0_0_1px_rgba(9,30,66,0.02)]">
+                  <textarea
+                    ref={commentRef}
+                    rows={commentFocus || commentDraft ? 3 : 1}
+                    className="w-full resize-none bg-transparent text-[14px] text-slate-800 outline-none placeholder:text-slate-400"
+                    placeholder="Add a comment..."
+                    value={commentDraft}
+                    onFocus={() => setCommentFocus(true)}
+                    onChange={(e) => setCommentDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault()
+                        saveComment()
+                      }
+                      if (e.key === 'Escape') {
+                        setCommentFocus(false)
+                        commentRef.current?.blur()
+                      }
+                    }}
+                  />
+                  {!commentDraft && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] text-slate-700 hover:bg-slate-50"
+                        onClick={() => insertComment('Can I get more info?')}
+                      >
+                        Can I get more info...?
+                      </button>
+                      <Dropdown
+                        trigger={() => (
+                          <button type="button" className="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] text-slate-700 hover:bg-slate-50">
+                            Status
+                            <ChevronRight size={12} />
+                          </button>
+                        )}
+                      >
+                        {(close) => (
+                          <>
+                            {STATUSES.map((s) => (
+                              <MenuItem key={s} onClick={() => { insertComment(`Status: ${s}`); close() }}>{s}</MenuItem>
+                            ))}
+                          </>
+                        )}
+                      </Dropdown>
+                    </div>
+                  )}
+                  {(commentFocus || commentDraft) && (
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" className="btn-primary py-1 text-xs" disabled={!commentDraft.trim()} onClick={saveComment}>Save</button>
+                      <button type="button" className="btn-subtle py-1 text-xs" onClick={() => { setCommentDraft(''); setCommentFocus(false) }}>Cancel</button>
+                    </div>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[12px] text-slate-500">
+                  Pro tip: press <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-sans text-[11px] text-slate-700">M</kbd> to comment
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {(activityView === 'comments' || activityView === 'all') && comments.map((c) => {
+              const author = users.find((u) => u.id === c.authorId)
+              return (
+                <div key={c.id} className="flex items-start gap-2">
+                  <Avatar user={author} size={28} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] text-slate-800">
+                      <span className="font-semibold">{author?.name ?? 'Unknown'}</span>
+                      <span className="ml-1.5 text-[12px] font-normal text-slate-500">{timeAgo(c.createdAt)}{c.updatedAt ? ' (edited)' : ''}</span>
+                    </div>
+                    <div className="mt-0.5 whitespace-pre-wrap text-[14px] text-slate-800">{c.body}</div>
+                  </div>
+                </div>
+              )
+            })}
+            {activityView === 'comments' && comments.length === 0 && !commentFocus && (
+              <div className="pl-10 text-[13px] text-slate-400">No comments yet</div>
+            )}
+            {(activityView === 'history' || activityView === 'all') && history.map((h) => {
+              const u = users.find((x) => x.id === h.userId)
+              return (
+                <div key={h.id} className="flex items-start gap-2 text-[13px] text-slate-700">
+                  <Avatar user={u} size={28} />
+                  <div>
+                    <span className="font-semibold">{u?.name}</span>{' '}
+                    {h.field === 'Created' ? 'created the work item' : <>changed <span className="font-semibold">{h.field}</span></>}
+                    <span className="ml-1 text-[12px] text-slate-500">{timeAgo(h.timestamp)}</span>
+                    {h.field !== 'Created' && (
+                      <div className="mt-0.5 text-[12px] text-slate-500">
+                        {h.oldValue || 'None'} → {h.newValue || 'None'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {activityView === 'worklog' && (sortedLogs.length ? sortedLogs.map((w) => {
+              const u = users.find((x) => x.id === w.userId)
+              return (
+                <div key={w.id} className="flex items-start gap-2 text-[13px] text-slate-700">
+                  <Avatar user={u} size={28} />
+                  <div>
+                    <span className="font-semibold">{u?.name}</span> logged <span className="font-semibold">{formatDuration(w.minutes)}</span>
+                    <span className="ml-1 text-[12px] text-slate-500">{timeAgo(w.createdAt)}</span>
+                    {w.description && <div className="text-slate-600">{w.description}</div>}
+                  </div>
+                </div>
+              )
+            }) : <div className="text-[13px] text-slate-400">No work logged yet</div>)}
           </div>
         </section>
       </div>
