@@ -8,6 +8,7 @@ import { useUi } from '../store/uiStore'
 import { commentService, workItemService, worklogService } from '../services/api'
 import { LINK_TYPES, PRIORITIES, TEAMS, type IssueType, type LinkType, type Priority, type WorkItem } from '../types'
 import { ALLOWED_PARENTS, findEpicAncestor, fmtDate, formatDuration, isDone, parseDuration, timeAgo, todayStr } from '../lib/utils'
+import { canCreateWorkItems } from '../lib/permissions'
 import { Avatar, Dropdown, EmptyState, MenuItem, PriorityIcon, ProgressBar, StatusBadge, Tabs, TypeIcon } from '../components/ui'
 import { StatusDropdown } from '../components/StatusDropdown'
 
@@ -252,7 +253,7 @@ function Detail({ item }: { item: WorkItem }) {
               <Link to={`/browse/${epic.id}`} className="flex items-center gap-1 hover:underline">
                 <TypeIcon type="Epic" size={14} /> {epic.id}
               </Link>
-            ) : (
+            ) : canCreateWorkItems(me) ? (
               <Dropdown
                 trigger={(open) => (
                   <button
@@ -303,7 +304,7 @@ function Detail({ item }: { item: WorkItem }) {
                   </div>
                 )}
               </Dropdown>
-            )}
+            ) : null}
           </>
         )}
         {item.type === 'Subtask' && parent && (

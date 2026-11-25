@@ -30,8 +30,8 @@ import { useProject } from './projectContext'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { now, isDone } from '../../lib/utils'
-import { workItemService } from '../../services/api'
-import type { WorkItem } from '../../types'
+import { userAdminService, workItemService } from '../../services/api'
+import { ISSUE_TYPES, PRIORITIES, STATUSES, type WorkItem } from '../../types'
 import { Avatar, TypeIcon } from '../../components/ui'
 import { StatusDropdown } from '../../components/StatusDropdown'
 import { WorkItemDrawer } from '../../components/WorkItemDrawer'
@@ -168,7 +168,17 @@ export default function Timeline() {
   // By default, children are collapsed so only top-level items appear in table
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [searchQuery, setSearchQuery] = useState('')
-  const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([])
+  const [typeFilter, setTypeFilter] = useState<string[]>([])
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [parentFilter, setParentFilter] = useState<string[]>([])
+  const [labelFilter, setLabelFilter] = useState<string[]>([])
+  const [priorityFilter, setPriorityFilter] = useState<string[]>([])
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filterField, setFilterField] = useState<string | null>(null)
+  const [extraFields, setExtraFields] = useState<string[]>([])
+  const [addFieldOpen, setAddFieldOpen] = useState(false)
+  const filterRef = useRef<HTMLDivElement>(null)
 
   // Inline editing states for row summaries
   const [editingRowId, setEditingRowId] = useState<string | null>(null)
@@ -194,22 +204,66 @@ export default function Timeline() {
     return () => document.removeEventListener('mousedown', onDoc, true)
   }, [assigneeMenuRowId])
 
-  const members = useMemo(
-    () => users.filter((u) => project.memberIds.includes(u.id) || project.leadId === u.id),
-    [users, project],
+  const members = users
+
+  useEffect(() => {
+    let cancelled = false
+    void userAdminService.list()
+      .then((rows) => {
+        if (cancelled || !rows.length) return
+        const existing = useStore.getState().users
+        const extra = rows.filter((u) => !existing.some((e) => e.id === u.id || e.email.toLowerCase() === u.email.toLowerCase()))
+        if (extra.length) useStore.setState({ users: [...existing, ...extra] })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!filterOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false)
+        setAddFieldOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [filterOpen])
+
+  const projectItems = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
+  const parentOptions = useMemo(
+    () => projectItems.filter((i) => i.type === 'Epic' || i.type === 'Story'),
+    [projectItems],
   )
+  const labelOptions = useMemo(() => [...new Set(projectItems.flatMap((i) => i.labels))].sort(), [projectItems])
+  const filterCount = assigneeFilter.length + typeFilter.length + statusFilter.length + parentFilter.length + labelFilter.length + priorityFilter.length
+  const clearFilters = () => {
+    setAssigneeFilter([])
+    setTypeFilter([])
+    setStatusFilter([])
+    setParentFilter([])
+    setLabelFilter([])
+    setPriorityFilter([])
+    setFilterField(null)
+  }
+  const toggleVal = (list: string[], set: (v: string[]) => void, value: string) =>
+    set(list.includes(value) ? list.filter((x) => x !== value) : [...list, value])
 
   const items = useMemo(() => {
-    let list = allItems.filter((i) => i.projectId === project.id)
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      list = list.filter((i) => i.summary.toLowerCase().includes(q) || i.id.toLowerCase().includes(q))
-    }
-    if (assigneeFilter) {
-      list = list.filter((i) => i.assigneeId === assigneeFilter)
-    }
-    return list
-  }, [allItems, project.id, searchQuery, assigneeFilter])
+    const q = searchQuery.trim().toLowerCase()
+    return allItems.filter((i) => {
+      if (i.projectId !== project.id) return false
+      if (q && !i.summary.toLowerCase().includes(q) && !i.id.toLowerCase().includes(q)) return false
+      if (assigneeFilter.length && !assigneeFilter.includes(i.assigneeId ?? 'none')) return false
+      if (typeFilter.length && !typeFilter.includes(i.type)) return false
+      if (statusFilter.length && !statusFilter.includes(i.status)) return false
+      if (parentFilter.length && !parentFilter.includes(i.parentId ?? 'none')) return false
+      if (labelFilter.length && !labelFilter.some((l) => i.labels.includes(l))) return false
+      if (priorityFilter.length && !priorityFilter.includes(i.priority)) return false
+      return true
+    })
+  }, [allItems, project.id, searchQuery, assigneeFilter, typeFilter, statusFilter, parentFilter, labelFilter, priorityFilter])
 
   const children = useMemo(() => {
     const m = new Map<string | null, WorkItem[]>()
@@ -346,10 +400,10 @@ export default function Timeline() {
           {members.slice(0, 4).map((u) => (
             <button
               key={u.id}
-              onClick={() => setAssigneeFilter(assigneeFilter === u.id ? null : u.id)}
+              onClick={() => setAssigneeFilter((f) => (f.includes(u.id) ? f.filter((x) => x !== u.id) : [...f, u.id]))}
               className={clsx(
                 'rounded-full ring-2 transition-transform hover:z-10 hover:scale-105',
-                assigneeFilter === u.id ? 'ring-blue-600 scale-105 z-10' : 'ring-white',
+                assigneeFilter.includes(u.id) ? 'ring-blue-600 scale-105 z-10' : 'ring-white',
               )}
               title={u.name}
             >
@@ -363,22 +417,98 @@ export default function Timeline() {
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setSearchQuery('')
-            setAssigneeFilter(null)
-          }}
-          className={clsx(
-            'flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors',
-            searchQuery || assigneeFilter
-              ? 'border-blue-500 bg-blue-50 text-blue-700'
-              : 'border-slate-300 text-slate-700 hover:bg-slate-50',
+        <div className="relative" ref={filterRef}>
+          <button
+            type="button"
+            className={clsx('btn-default', (filterOpen || filterCount > 0) && 'border-brand-600 bg-brand-50 text-brand-700')}
+            onClick={() => setFilterOpen((o) => !o)}
+          >
+            <Filter size={14} /> Filter{filterCount > 0 ? ` · ${filterCount}` : ''}
+          </button>
+          {filterOpen && (
+            <div className="absolute z-30 mt-1 flex w-[520px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+              <div className="flex min-h-[280px]">
+                <div className="w-44 shrink-0 border-r border-slate-200 py-2">
+                  {([
+                    ['parent', 'Parent'],
+                    ['assignee', 'Assignee'],
+                    ['status', 'Status'],
+                    ['type', 'Work type'],
+                    ['labels', 'Labels'],
+                    ...extraFields.map((f) => [f, f === 'priority' ? 'Priority' : f] as const),
+                  ] as [string, string][]).map(([id, label]) => (
+                    <button
+                      key={id}
+                      className={clsx('flex w-full px-4 py-2 text-left text-sm', filterField === id ? 'bg-slate-100 font-medium text-slate-900' : 'text-slate-700 hover:bg-slate-50')}
+                      onClick={() => { setFilterField(id); setAddFieldOpen(false) }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <div className="relative px-3 pt-2">
+                    <button className="btn-default w-full justify-center" onClick={() => setAddFieldOpen((o) => !o)}>
+                      <Plus size={14} /> Add field
+                    </button>
+                    {addFieldOpen && (
+                      <div className="absolute left-3 right-3 z-10 mt-1 rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                        {['priority'].filter((f) => !extraFields.includes(f)).map((f) => (
+                          <button
+                            key={f}
+                            className="block w-full px-3 py-1.5 text-left text-sm capitalize hover:bg-slate-50"
+                            onClick={() => { setExtraFields((x) => [...x, f]); setFilterField(f); setAddFieldOpen(false) }}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                        {extraFields.includes('priority') && <div className="px-3 py-1.5 text-xs text-slate-400">All fields added</div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1 p-4">
+                  {!filterField && <p className="text-sm text-slate-500">Select a field to start creating a filter.</p>}
+                  {filterField === 'parent' && (
+                    <CheckList
+                      options={[{ value: 'none', label: 'No parent' }, ...parentOptions.map((p) => ({ value: p.id, label: `${p.id} ${p.summary}` }))]}
+                      selected={parentFilter}
+                      onToggle={(v) => toggleVal(parentFilter, setParentFilter, v)}
+                    />
+                  )}
+                  {filterField === 'assignee' && (
+                    <CheckList
+                      options={[{ value: 'none', label: 'Unassigned' }, ...members.map((u) => ({ value: u.id, label: u.name }))]}
+                      selected={assigneeFilter}
+                      onToggle={(v) => toggleVal(assigneeFilter, setAssigneeFilter, v)}
+                    />
+                  )}
+                  {filterField === 'status' && (
+                    <CheckList options={STATUSES.map((s) => ({ value: s, label: s }))} selected={statusFilter} onToggle={(v) => toggleVal(statusFilter, setStatusFilter, v)} />
+                  )}
+                  {filterField === 'type' && (
+                    <CheckList options={ISSUE_TYPES.filter((t) => t !== 'Epic' && t !== 'Subtask').map((t) => ({ value: t, label: t }))} selected={typeFilter} onToggle={(v) => toggleVal(typeFilter, setTypeFilter, v)} />
+                  )}
+                  {filterField === 'labels' && (
+                    labelOptions.length === 0
+                      ? <p className="text-sm text-slate-500">No labels in this space yet.</p>
+                      : <CheckList options={labelOptions.map((l) => ({ value: l, label: l }))} selected={labelFilter} onToggle={(v) => toggleVal(labelFilter, setLabelFilter, v)} />
+                  )}
+                  {filterField === 'priority' && (
+                    <CheckList options={PRIORITIES.map((p) => ({ value: p, label: p }))} selected={priorityFilter} onToggle={(v) => toggleVal(priorityFilter, setPriorityFilter, v)} />
+                  )}
+                </div>
+              </div>
+              <div className="border-t border-slate-200 px-4 py-2">
+                <button
+                  className={clsx('text-sm', filterCount ? 'text-slate-700 hover:underline' : 'cursor-default text-slate-300')}
+                  disabled={filterCount === 0}
+                  onClick={clearFilters}
+                >
+                  Clear all
+                </button>
+              </div>
+            </div>
           )}
-        >
-          <Filter size={12} />
-          <span>Filter</span>
-        </button>
+        </div>
 
         <div className="ml-auto flex items-center gap-1">
           <button
@@ -779,6 +909,25 @@ export default function Timeline() {
             <Info size={14} />
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function CheckList({ options, selected, onToggle }: { options: { value: string; label: string }[]; selected: string[]; onToggle: (value: string) => void }) {
+  const [q, setQ] = useState('')
+  const list = options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase()))
+  return (
+    <div>
+      {options.length > 8 && <input className="input mb-2" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />}
+      <div className="max-h-52 overflow-auto">
+        {list.length === 0 && <div className="text-sm text-slate-500">No matches</div>}
+        {list.map((o) => (
+          <label key={o.value} className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+            <input type="checkbox" checked={selected.includes(o.value)} onChange={() => onToggle(o.value)} />
+            <span className="truncate">{o.label}</span>
+          </label>
+        ))}
       </div>
     </div>
   )

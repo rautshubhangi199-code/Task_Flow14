@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { fetchOnPageLoad } from './services/api'
 import { Layout } from './components/Layout'
 import Login from './pages/Login'
 import ForYou from './pages/ForYou'
@@ -7,8 +9,8 @@ import Starred from './pages/Starred'
 import Spaces from './pages/Spaces'
 import Placeholder from './pages/Placeholder'
 import SettingsLayout from './pages/settings/SettingsLayout'
-import UsersPage from './pages/settings/UsersPage'
 import InviteUsersPage from './pages/settings/InviteUsersPage'
+import UsersPage from './pages/settings/UsersPage'
 import SettingsSection from './pages/settings/SettingsSection'
 import WorkItemsSettings from './pages/settings/WorkItemsSettings'
 import PersonalSettingsLayout from './pages/settings/PersonalSettingsLayout'
@@ -35,6 +37,9 @@ import SpaceWorkTypes from './pages/settings/SpaceWorkTypes'
 import MoveIssue from './pages/MoveIssue'
 
 export default function App() {
+  useEffect(() => {
+    void fetchOnPageLoad()
+  }, [])
   return (
     <BrowserRouter>
       <Routes>

@@ -11,6 +11,7 @@ import { useUi } from '../store/uiStore'
 import { commentService, workItemService } from '../services/api'
 import { ISSUE_TYPES, LINK_TYPES, TEAMS, type IssueType, type LinkType, type Status, type WorkItemInput } from '../types'
 import { ALLOWED_PARENTS, isDone } from '../lib/utils'
+import { canCreateWorkItems } from '../lib/permissions'
 import { Avatar, ProjectIcon, TypeIcon } from './ui'
 import { StatusCircleIcon } from './StatusDropdown'
 
@@ -18,7 +19,8 @@ export function CreateWorkItemModal() {
   const open = useUi((s) => s.createItemOpen)
   const defaults = useUi((s) => s.createItemDefaults)
   const close = useUi((s) => s.closeCreateItem)
-  if (!open) return null
+  const me = useCurrentUser()
+  if (!open || !canCreateWorkItems(me)) return null
   return <CreateWorkItemForm defaults={defaults} onClose={close} />
 }
 
@@ -420,7 +422,7 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
   )
 
   const assigneeQuery = assigneeQ.trim().toLowerCase()
-  const assigneeMatches = members.filter((u) => {
+  const assigneeMatches = users.filter((u) => {
     if (!assigneeQuery || assigneeQuery === 'automatic') return true
     return u.name.toLowerCase().includes(assigneeQuery) || u.email.toLowerCase().includes(assigneeQuery)
   })

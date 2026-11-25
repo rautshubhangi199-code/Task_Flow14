@@ -12,6 +12,36 @@
 html, body, #root { height: 100%; }
 body { @apply bg-white text-slate-800 antialiased; font-size: 14px; }
 
+html.dark,
+html.dark body,
+html.dark #root {
+  background-color: #1d2125;
+  color: #c7d1db;
+  color-scheme: dark;
+}
+html.dark .bg-white { background-color: #22272b !important; }
+html.dark .bg-slate-50,
+html.dark .bg-\[\#F7F8F9\],
+html.dark .bg-\[\#F4F5F7\] { background-color: #1d2125 !important; }
+html.dark .bg-slate-100 { background-color: #2c333a !important; }
+html.dark .text-slate-800,
+html.dark .text-slate-700,
+html.dark .text-\[\#172B4D\] { color: #c7d1db !important; }
+html.dark .text-slate-600,
+html.dark .text-slate-500,
+html.dark .text-\[\#44546F\],
+html.dark .text-\[\#626F86\] { color: #9fadbc !important; }
+html.dark .border-slate-200,
+html.dark .border-slate-300,
+html.dark .border-\[\#DFE1E6\] { border-color: #3b444c !important; }
+html.dark header,
+html.dark aside { background-color: #22272b !important; border-color: #3b444c !important; }
+html.dark input,
+html.dark select,
+html.dark textarea { background-color: #22272b !important; color: #c7d1db !important; border-color: #738496 !important; }
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-slate-50:hover { background-color: #2c333a !important; }
+
 @utility btn { @apply inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed; }
 @utility btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
 @utility btn-subtle { @apply btn text-slate-700 hover:bg-slate-100; }

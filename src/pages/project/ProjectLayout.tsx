@@ -5,6 +5,7 @@ import { useStore } from '../../store/useStore'
 import { useCurrentUser, useProjectByKey } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { projectService } from '../../services/api'
+import { canCreateWorkItems } from '../../lib/permissions'
 import { EmptyState, ProjectIcon } from '../../components/ui'
 
 const TABS = [
@@ -45,7 +46,7 @@ export default function ProjectLayout() {
             <Star size={18} className={isStarred ? 'fill-amber-400 text-amber-400' : 'text-slate-400 hover:text-slate-600'} />
           </button>
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{project.type}</span>
-          <button className="btn-default ml-auto" onClick={() => openCreate({ projectId: project.id })}><Plus size={16} /> Create in {project.key}</button>
+          {canCreateWorkItems(me) && <button className="btn-default ml-auto" onClick={() => openCreate({ projectId: project.id })}><Plus size={16} /> Create in {project.key}</button>}
         </div>
         <nav className="mt-3 flex gap-0 overflow-x-auto whitespace-nowrap">
           {TABS.map(([path, label, Icon]) => (

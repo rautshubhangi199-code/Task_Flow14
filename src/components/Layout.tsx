@@ -8,8 +8,11 @@ import { Toasts } from './Toasts'
 import { useCurrentUser, usePersonalSettings } from '../store/hooks'
 import { useStore } from '../store/useStore'
 import { useUi } from '../store/uiStore'
+import { ensureAdminSessionUser } from '../pages/Login'
+import { canCreateWorkItems } from '../lib/permissions'
 
 export function Layout() {
+  ensureAdminSessionUser()
   const user = useCurrentUser()
   const settings = usePersonalSettings()
   const [collapsed, setCollapsed] = useState(false)
@@ -31,7 +34,7 @@ export function Layout() {
         e.preventDefault()
         setShortcutsOpen((o) => !o)
       }
-      if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
+      if (e.key === 'c' && !e.metaKey && !e.ctrlKey && canCreateWorkItems(user)) {
         e.preventDefault()
         openCreateItem()
       }
@@ -39,7 +42,7 @@ export function Layout() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [settings.keyboardShortcuts, openCreateItem])
+  }, [settings.keyboardShortcuts, openCreateItem, user])
   if (!user) return <Navigate to="/login" replace />
   const location = useLocation()
   const isSpaceSettings = location.pathname.includes('/settings/work-types')

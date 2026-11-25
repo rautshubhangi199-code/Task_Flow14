@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
@@ -12,6 +12,8 @@ import {
   Columns3,
   Copy,
   Ellipsis,
+  Link2,
+  Plus,
   MessageSquare,
   RotateCcw,
   Search,
@@ -28,7 +30,32 @@ import { filterService, workItemService } from '../../services/api'
 import { DEFAULT_FILTERS, JqlError, quoteValue, runJql, sortItems, type SortSpec } from '../../lib/jql'
 import { useJqlContext } from '../../lib/useJqlContext'
 import { fmtDate, formatDuration, isDone, STATUS_STYLE, timeAgo, userName } from '../../lib/utils'
-import { ISSUE_TYPES, PRIORITIES, STATUSES, type Priority, type Status } from '../../types'
+import { ISSUE_TYPES, PRIORITIES, STATUSES, type IssueType, type Priority, type Status, type WorkItem } from '../../types'
+
+const PRIORITY_MENU: Priority[] = ['Highest', 'High', 'Low', 'Lowest', 'Medium']
+const STATUS_MENU = ['block', 'Cancel', 'Reject', 'To Do', 'Daily Running', 'Dev Done', 'On-Hold', 'QA Done'] as const
+
+function canonicalStatus(name: string): Status {
+  const n = name.trim().toLowerCase().replace(/[\s-_]/g, '')
+  if (n === 'todo') return 'To Do'
+  if (n === 'inprogress' || n === 'dailyrunning') return 'In Progress'
+  if (n === 'devdone' || n === 'developersdone') return 'Developers Done'
+  if (n === 'qadone') return 'QA-Done'
+  if (n === 'done') return 'Done'
+  if (n === 'reject') return 'Reject'
+  if (n === 'onhold' || n === 'block') return 'On Hold'
+  if (n === 'drop' || n === 'cancel') return 'Drop'
+  if ((STATUSES as readonly string[]).includes(name)) return name as Status
+  return 'To Do'
+}
+
+function statusLozengeClass(name: string) {
+  const n = name.trim().toLowerCase()
+  if (['block', 'cancel', 'reject', 'to do', 'drop'].includes(n)) return 'bg-[#dfe1e6] text-[#42526e]'
+  if (n === 'done') return 'bg-[#e3fcef] text-[#006644]'
+  return 'bg-[#d2e5fe] text-[#0747a6]'
+}
+
 import { Avatar, Dropdown, MenuItem, Modal, PriorityIcon, ProjectIcon, TypeIcon } from '../../components/ui'
 import { StatusDropdown } from '../../components/StatusDropdown'
 
@@ -137,13 +164,42 @@ function Chip({
   )
 }
 
-export default function FilterSearch() {
+export default function FilterSearch({
+  lockProjectKey,
+  hidePageHeader,
+  extraPredicate,
+}: {
+  lockProjectKey?: string
+  hidePageHeader?: boolean
+  extraPredicate?: (i: WorkItem) => boolean
+} = {}) {
   const [params] = useSearchParams()
   const loc = useLocation()
-  return <FilterSearchInner key={loc.pathname + loc.search} params={params} isAll={loc.pathname === '/filters/all'} />
+  return (
+    <FilterSearchInner
+      key={loc.pathname + loc.search + (lockProjectKey ?? '')}
+      params={params}
+      isAll={loc.pathname === '/filters/all'}
+      lockProjectKey={lockProjectKey}
+      hidePageHeader={hidePageHeader}
+      extraPredicate={extraPredicate}
+    />
+  )
 }
 
-function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: boolean }) {
+function FilterSearchInner({
+  params,
+  isAll,
+  lockProjectKey,
+  hidePageHeader,
+  extraPredicate,
+}: {
+  params: URLSearchParams
+  isAll: boolean
+  lockProjectKey?: string
+  hidePageHeader?: boolean
+  extraPredicate?: (i: WorkItem) => boolean
+}) {
   const me = useCurrentUser()!
   const isAdmin = canAccessSettings(me)
   const navigate = useNavigate()
@@ -166,7 +222,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const [text, setText] = useState(initialJql)
   const [applied, setApplied] = useState(initialJql)
   const [basic, setBasic] = useState({
-    project: '',
+    project: lockProjectKey ?? '',
     assignee: '',
     type: '',
     status: '',
@@ -196,6 +252,9 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const [askText, setAskText] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSummary, setEditSummary] = useState('')
+  const [addingUnderId, setAddingUnderId] = useState<string | null>(null)
+  const [addTitle, setAddTitle] = useState('')
+  const [addType, setAddType] = useState<IssueType>('Task')
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assignQ, setAssignQ] = useState('')
   const [assignPos, setAssignPos] = useState({ top: 0, left: 0 })
@@ -204,6 +263,8 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const [reporterPos, setReporterPos] = useState({ top: 0, left: 0 })
   const [priorityId, setPriorityId] = useState<string | null>(null)
   const [priorityPos, setPriorityPos] = useState({ top: 0, left: 0 })
+  const [statusId, setStatusId] = useState<string | null>(null)
+  const [statusPos, setStatusPos] = useState({ top: 0, left: 0 })
   const [cellEdit, setCellEdit] = useState<{ id: string; field: CellField } | null>(null)
   const [visibleCols, setVisibleCols] = useState({ ...DEFAULT_VISIBLE_COLS })
   const [colQ, setColQ] = useState('')
@@ -230,7 +291,8 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
 
   const basicJql = useMemo(() => {
     const c: string[] = []
-    if (basic.project) c.push(`project = ${quoteValue(basic.project)}`)
+    const projectKey = lockProjectKey || basic.project
+    if (projectKey) c.push(`project = ${quoteValue(projectKey)}`)
     if (basic.assignee) c.push(basic.assignee === 'EMPTY' ? 'assignee IS EMPTY' : basic.assignee === 'me' ? 'assignee = currentUser()' : `assignee = ${quoteValue(basic.assignee)}`)
     if (basic.type) c.push(`type = ${quoteValue(basic.type)}`)
     if (basic.status) c.push(`status = ${quoteValue(basic.status)}`)
@@ -240,9 +302,9 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
     if (basic.parent) c.push(`parent = ${quoteValue(basic.parent)}`)
     if (basic.text.trim()) c.push(`text ~ "${basic.text.trim().replace(/"/g, '')}"`)
     return c.join(' AND ')
-  }, [basic])
+  }, [basic, lockProjectKey])
 
-  const query = mode === 'basic' ? basicJql : applied
+  const query = mode === 'basic' ? basicJql : (applied || (lockProjectKey ? `project = ${quoteValue(lockProjectKey)}` : ''))
   const result = useMemo(() => {
     try {
       const r = runJql(query, items, ctx)
@@ -272,13 +334,13 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
           if (basic.created === '7d' && t < Date.now() - 7 * day) return false
           if (basic.created === '30d' && t < Date.now() - 30 * day) return false
         }
-        return true
+        return extraPredicate ? extraPredicate(i) : true
       })
       return { items: extra, error: null as string | null }
     } catch (e) {
       return { items: [], error: e instanceof JqlError ? e.message : String(e) }
     }
-  }, [query, items, ctx, basic, spentByItem, me.id, users])
+  }, [query, items, ctx, basic, spentByItem, me.id, users, extraPredicate])
 
   const sorted = useMemo(() => (sort ? sortItems(result.items, [sort], ctx) : result.items), [result.items, sort, ctx])
   const pages = Math.max(1, Math.ceil(sorted.length / pageSize))
@@ -339,18 +401,46 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
     cancelEdit()
   }
 
+  const submitInlineAdd = async (parent: typeof items[number]) => {
+    const title = addTitle.trim()
+    if (!title) return
+    const created = await workItemService.create({
+      projectId: parent.projectId,
+      type: addType,
+      summary: title,
+      description: '',
+      status: 'To Do',
+      priority: 'Medium',
+      originalEstimate: null,
+      assigneeId: null,
+      reporterId: me.id,
+      labels: [],
+      parentId: parent.id,
+      dueDate: null,
+      startDate: null,
+      team: parent.team,
+      sprintId: parent.sprintId,
+      storyPoints: null,
+    })
+    setAddingUnderId(null)
+    setAddTitle('')
+    showToast(`Added ${created.id}`)
+    startEdit(created.id, created.summary)
+  }
+
   useEffect(() => {
-    if (!assigningId && !reporterCardId && !priorityId && !cellEdit) return
+    if (!assigningId && !reporterCardId && !priorityId && !statusId && !cellEdit) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement
       if (assigningId && !t.closest('[data-assignee-picker]')) setAssigningId(null)
       if (reporterCardId && !t.closest('[data-reporter-card]')) setReporterCardId(null)
       if (priorityId && !t.closest('[data-priority-picker]')) setPriorityId(null)
+      if (statusId && !t.closest('[data-status-picker]')) setStatusId(null)
       if (cellEdit && !t.closest('[data-cell-edit]')) setCellEdit(null)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [assigningId, reporterCardId, priorityId, cellEdit])
+  }, [assigningId, reporterCardId, priorityId, statusId, cellEdit])
 
   const openAssignee = (itemId: string, currentName: string, el: HTMLElement) => {
     const r = el.getBoundingClientRect()
@@ -366,6 +456,15 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
   const pickPriority = (itemId: string, priority: Priority) => {
     workItemService.update(itemId, { priority })
     setPriorityId(null)
+  }
+  const openStatus = (itemId: string, el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    setStatusPos({ top: r.bottom + 4, left: r.left })
+    setStatusId(itemId)
+  }
+  const pickStatus = (itemId: string, name: string) => {
+    workItemService.update(itemId, { status: canonicalStatus(name) })
+    setStatusId(null)
   }
 
   const openReporter = (userId: string, el: HTMLElement) => {
@@ -401,6 +500,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white px-6 py-5">
+      {!hidePageHeader && (
       <div className="mb-4 flex items-center gap-2">
         <h1 className="text-[24px] font-semibold tracking-tight text-slate-900">{title}</h1>
         <button
@@ -412,7 +512,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
           }}
         >
           <Star size={18} className={starred ? 'fill-amber-400 text-amber-400' : 'text-slate-400'} />
-        </button>
+          </button>
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -421,6 +521,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
           <span className="text-[13px] text-slate-500">Apps</span>
         </div>
       </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative">
@@ -464,12 +565,12 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                 onChange={(e) => setB({ text: e.target.value })}
               />
             </div>
-            <Chip label="Space" value={projectLabel}>
+            <Chip label="Space" value={lockProjectKey ? projects.find((p) => p.key === lockProjectKey)?.name ?? projectLabel : projectLabel}>
               {(close) => (
                 <>
-                  <MenuItem active={!basic.project} onClick={() => { setB({ project: '' }); close() }}>All spaces</MenuItem>
-                  {projects.map((p) => (
-                    <MenuItem key={p.id} active={basic.project === p.key} onClick={() => { setB({ project: p.key }); close() }}>
+                  {!lockProjectKey && <MenuItem active={!basic.project} onClick={() => { setB({ project: '' }); close() }}>All spaces</MenuItem>}
+                  {projects.filter((p) => !lockProjectKey || p.key === lockProjectKey).map((p) => (
+                    <MenuItem key={p.id} active={(lockProjectKey || basic.project) === p.key} onClick={() => { if (!lockProjectKey) setB({ project: p.key }); close() }}>
                       {p.icon} {p.name}
                     </MenuItem>
                   ))}
@@ -623,7 +724,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                     <MenuItem active={basic.endDate === 'empty'} onClick={() => { setB({ endDate: 'empty' }); close() }}>None</MenuItem>
                     <div className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                       <input type="date" className="input py-1" value={basic.endDate !== 'empty' ? basic.endDate : ''} onChange={(e) => { setB({ endDate: e.target.value }); close() }} />
-                    </div>
+          </div>
                   </>
                 )}
               </Chip>
@@ -743,7 +844,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
       {result.error && (
         <div className="mb-3 flex items-center gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <AlertCircle size={16} /> {result.error}
-        </div>
+      </div>
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -875,8 +976,8 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
               const statusStyle = STATUS_STYLE[i.status] ?? 'bg-slate-100 text-slate-700'
               const editing = editingId === i.id
               return (
+                <Fragment key={i.id}>
                 <tr
-                  key={i.id}
                   className={clsx('group', editing ? 'bg-[#deebff]' : 'cursor-pointer hover:bg-[#f1f2f4]')}
                   onClick={() => { if (!editing) navigate(`/browse/${i.id}`) }}
                 >
@@ -932,11 +1033,35 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                           <button
                             type="button"
                             className="min-w-0 flex-1 truncate text-left text-[14px] text-[#172b4d]"
+                            title={i.summary}
                             onClick={() => startEdit(i.id, i.summary)}
                           >
                             {i.summary}
                           </button>
+                          <button
+                            type="button"
+                            className="invisible shrink-0 rounded p-0.5 text-[#6b778c] hover:bg-[#dfe1e6] group-hover:visible"
+                            title="Copy link"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(`${window.location.origin}/browse/${i.id}`)
+                              showToast('Link copied')
+                            }}
+                          >
+                            <Link2 size={14} />
+                          </button>
                           <ArrowUpRight size={14} className="invisible shrink-0 text-[#6b778c] group-hover:visible" />
+                          <button
+                            type="button"
+                            className="invisible shrink-0 rounded p-0.5 text-[#6b778c] hover:bg-[#dfe1e6] group-hover:visible"
+                            title="Add task"
+                            onClick={() => {
+                              setAddingUnderId(i.id)
+                              setAddTitle('')
+                              setAddType(i.type === 'Epic' ? 'Task' : 'Subtask')
+                            }}
+                          >
+                            <Plus size={16} />
+                          </button>
                         </>
                       )}
                     </div>
@@ -1064,27 +1189,29 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                         type="button"
                         data-priority-picker
                         className={clsx(
-                          'inline-flex h-8 min-w-[132px] items-center gap-1.5 rounded-[3px] px-2 text-[14px] text-[#172b4d]',
-                          priorityId === i.id ? 'border-2 border-[#4c9aff] bg-white' : 'border border-transparent hover:bg-white',
+                          'inline-flex h-8 min-w-[148px] items-center gap-2 rounded-[3px] bg-white px-2 text-[14px] text-[#172b4d]',
+                          priorityId === i.id
+                            ? 'border-2 border-[#0C66E4] shadow-[0_0_0_1px_#0C66E4]'
+                            : 'border border-transparent hover:bg-[#f4f5f7]',
                         )}
                         onClick={(e) => openPriority(i.id, e.currentTarget)}
                       >
                         <PriorityIcon priority={i.priority} />
                         <span className="flex-1 text-left">{i.priority}</span>
-                        <ChevronDown size={14} className="text-[#6b778c]" />
+                        <ChevronDown size={16} className="text-[#44546f]" />
                       </button>
                       {priorityId === i.id && createPortal(
                         <div
                           data-priority-picker
-                          className="fixed z-[80] min-w-[180px] overflow-hidden rounded-[3px] border border-[#dfe1e6] bg-white py-1 shadow-lg"
+                          className="fixed z-[80] min-w-[168px] overflow-hidden rounded-[3px] border border-[#dfe1e6] bg-white py-1 shadow-[0_8px_16px_rgba(9,30,66,0.25)]"
                           style={{ top: priorityPos.top, left: priorityPos.left }}
                         >
-                          {PRIORITIES.map((p) => (
+                          {PRIORITY_MENU.map((p) => (
                             <button
                               key={p}
                               type="button"
                               className={clsx(
-                                'flex w-full items-center gap-2 px-3 py-2 text-left text-[14px] text-[#172b4d] hover:bg-[#f4f5f7]',
+                                'flex w-full items-center gap-2 px-3 py-[7px] text-left text-[14px] text-[#172b4d] hover:bg-[#f4f5f7]',
                                 p === i.priority && 'bg-[#f4f5f7]',
                               )}
                               onClick={() => pickPriority(i.id, p)}
@@ -1099,14 +1226,66 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                     </td>
                   )}
                   {visibleCols.status && (
-                    <td className="border-b border-[#ebecf0] px-2 py-2 [&_button>span:first-child]:hidden" onClick={(e) => e.stopPropagation()}>
-                      <StatusDropdown
-                        value={i.status}
-                        variant="chip"
-                        projectKey={project?.key}
-                        className={clsx('!gap-0.5 !rounded-[3px] !border-0 !px-2 !py-0.5 !text-[13px] !font-medium !shadow-none', statusStyle)}
-                        onChange={(s) => workItemService.update(i.id, { status: s as Status })}
-                      />
+                    <td className="border-b border-[#ebecf0] px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        data-status-picker
+                        className={clsx(
+                          'inline-flex h-7 items-center gap-1 rounded-[3px] px-2 text-[13px] font-medium',
+                          statusStyle,
+                        )}
+                        onClick={(e) => openStatus(i.id, e.currentTarget)}
+                      >
+                        {i.status}
+                        <ChevronDown size={14} />
+                      </button>
+                      {statusId === i.id && createPortal(
+                        <div
+                          data-status-picker
+                          className="fixed z-[80] min-w-[220px] overflow-hidden rounded-[8px] border border-[#dfe1e6] bg-white py-1 shadow-[0_8px_16px_rgba(9,30,66,0.25)]"
+                          style={{ top: statusPos.top, left: statusPos.left }}
+                        >
+                          {STATUS_MENU.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              className={clsx(
+                                'flex w-full items-center px-3 py-[7px] text-left hover:bg-[#f4f5f7]',
+                                canonicalStatus(s) === i.status && 'border-l-[3px] border-l-[#0C66E4] bg-[#f4f5f7] pl-[9px]',
+                              )}
+                              onClick={() => pickStatus(i.id, s)}
+                            >
+                              <span className={clsx('inline-flex rounded-[3px] px-2 py-0.5 text-[13px] font-medium', statusLozengeClass(s))}>
+                                {s}
+                              </span>
+                            </button>
+                          ))}
+                          <div className="mt-0.5 border-t border-[#dfe1e6] py-1">
+                            <button
+                              type="button"
+                              className="flex w-full items-center px-4 py-2.5 text-left text-[15px] text-[#172b4d] hover:bg-[#f4f5f7]"
+                              onClick={() => {
+                                setStatusId(null)
+                                if (project?.key) navigate(`/projects/${project.key}/settings/work-types`)
+                              }}
+                            >
+                              View workflow
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[15px] text-[#172b4d] hover:bg-[#f4f5f7]"
+                              onClick={() => {
+                                setStatusId(null)
+                                showToast('This work item follows the space workflow')
+                              }}
+                            >
+                              <ArrowUpRight size={16} className="text-[#44546f]" />
+                              Explain workflow
+                            </button>
+                          </div>
+                        </div>,
+                        document.body,
+                      )}
                     </td>
                   )}
                   {visibleCols.resolution && (
@@ -1293,6 +1472,46 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
                     </Dropdown>
                   </td>
                 </tr>
+                {addingUnderId === i.id && (
+                  <tr>
+                    <td className="border-b border-[#ebecf0] px-3 py-2" />
+                    <td colSpan={24} className="border-b border-[#ebecf0] px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="ml-4 flex items-center gap-2 rounded-[3px] border-2 border-[#0C66E4] bg-white px-2 py-1.5">
+                        <input type="checkbox" checked readOnly className="h-3.5 w-3.5 accent-[#0c66e4]" />
+                        <select
+                          className="h-7 rounded border-0 bg-transparent text-[13px] text-[#172b4d] outline-none"
+                          value={addType}
+                          onChange={(e) => setAddType(e.target.value as IssueType)}
+                          aria-label="Work type"
+                        >
+                          {ISSUE_TYPES.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                        <TypeIcon type={addType} size={16} />
+                        <div className="relative min-w-0 flex-1">
+                          <input
+                            autoFocus
+                            className="h-8 w-full bg-transparent text-[14px] text-[#172b4d] outline-none"
+                            value={addTitle}
+                            onChange={(e) => setAddTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void submitInlineAdd(i)
+                              if (e.key === 'Escape') { setAddingUnderId(null); setAddTitle('') }
+                            }}
+                          />
+                          {!addTitle && (
+                            <div className="pointer-events-none absolute inset-0 flex items-center text-[14px] text-[#6b778c]">
+                              Enter a title, or&nbsp;
+                              <span className="text-[#0C66E4] underline">ask Rovo to break down work</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>
@@ -1310,7 +1529,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
           {sorted.length === 0 ? '0 of 0' : `${pageItems.length} of ${sorted.length}`}
           <MessageSquare size={14} className="text-slate-400" />
         </span>
-        {pages > 1 && (
+      {pages > 1 && (
           <button type="button" className="btn-subtle py-0.5" disabled={current >= pages - 1} onClick={() => setPage(current + 1)}>Next</button>
         )}
         {query && (
@@ -1318,7 +1537,7 @@ function FilterSearchInner({ params, isAll }: { params: URLSearchParams; isAll: 
             Save filter
           </button>
         )}
-      </div>
+        </div>
 
       {isAdmin && reporterCardId && createPortal((() => {
         const person = users.find((u) => u.id === reporterCardId)

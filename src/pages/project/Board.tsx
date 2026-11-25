@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { Filter, Plus, Search, Settings, X } from 'lucide-react'
+import { Plus, Search, Settings, X } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
@@ -13,6 +13,7 @@ import { ISSUE_TYPES, PRIORITIES, STATUSES, TEAMS, type Status, type User, type 
 import { Avatar, PriorityIcon, StatusBadge, TypeIcon } from '../../components/ui'
 import { StatusDropdown } from '../../components/StatusDropdown'
 import { timeAgo } from '../../lib/utils'
+import { BacklogFilterBar, useBacklogFilter } from './BacklogFilter'
 
 export default function Board() {
   const project = useProject()
@@ -25,22 +26,13 @@ export default function Board() {
   const [q, setQ] = useState('')
   const [groupBy, setGroupBy] = useState<'none' | 'assignee'>('none')
   const [sprintId, setSprintId] = useState(activeSprint?.id ?? 'all')
-  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([])
-  const [typeFilter, setTypeFilter] = useState<string[]>([])
-  const [statusFilter, setStatusFilter] = useState<string[]>([])
-  const [parentFilter, setParentFilter] = useState<string[]>([])
-  const [labelFilter, setLabelFilter] = useState<string[]>([])
-  const [filterOpen, setFilterOpen] = useState(false)
-  const [filterField, setFilterField] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
-  const filterRef = useRef<HTMLDivElement>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const filter = useBacklogFilter()
 
-  const members = users.filter((u) => project.memberIds.includes(u.id) || project.leadId === u.id)
+  const members = users
   const projectItems = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
-  const parentOptions = useMemo(() => projectItems.filter((i) => i.type === 'Epic' || i.type === 'Story'), [projectItems])
-  const labelOptions = useMemo(() => [...new Set(projectItems.flatMap((i) => i.labels))].sort(), [projectItems])
-  const filterCount = assigneeFilter.length + typeFilter.length + statusFilter.length + parentFilter.length + labelFilter.length
+  const filterCount = filter.filterCount
 
   const items = useMemo(() => {
     const ql = q.toLowerCase()
@@ -48,23 +40,9 @@ export default function Board() {
       if (i.type === 'Epic') return false
       if (sprintId !== 'all' && i.sprintId !== sprintId) return false
       if (ql && !i.summary.toLowerCase().includes(ql) && !i.id.toLowerCase().includes(ql)) return false
-      if (assigneeFilter.length && !assigneeFilter.includes(i.assigneeId ?? 'none')) return false
-      if (typeFilter.length && !typeFilter.includes(i.type)) return false
-      if (statusFilter.length && !statusFilter.includes(i.status)) return false
-      if (parentFilter.length && !parentFilter.includes(i.parentId ?? 'none')) return false
-      if (labelFilter.length && !labelFilter.some((l) => i.labels.includes(l))) return false
-      return true
+      return filter.matches(i)
     })
-  }, [projectItems, sprintId, q, assigneeFilter, typeFilter, statusFilter, parentFilter, labelFilter])
-
-  useEffect(() => {
-    if (!filterOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [filterOpen])
+  }, [projectItems, sprintId, q, filter.matches])
 
   const lanes = groupBy === 'assignee'
     ? [...members.map((u) => ({ id: u.id, name: u.name, user: u })), { id: 'none', name: 'Unassigned', user: undefined }].filter((l) => items.some((i) => (i.assigneeId ?? 'none') === l.id))
@@ -84,17 +62,7 @@ export default function Board() {
     if (Object.keys(patch).length) workItemService.update(item.id, patch)
   }
 
-  const clearFilters = () => {
-    setAssigneeFilter([])
-    setTypeFilter([])
-    setStatusFilter([])
-    setParentFilter([])
-    setLabelFilter([])
-    setFilterField(null)
-  }
-
-  const toggleVal = (list: string[], set: (v: string[]) => void, value: string) =>
-    set(list.includes(value) ? list.filter((x) => x !== value) : [...list, value])
+  const clearFilters = filter.clearFilters
 
   const openItem = (id: string) => setOpenId(id)
 
@@ -107,40 +75,14 @@ export default function Board() {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input className="input pl-8" placeholder="Search board" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        <BacklogFilterBar users={users} projectItems={projectItems} showAvatars={false} {...filter.panelProps} />
         <div className="flex -space-x-1">
           {shownMembers.map((u) => (
-            <button key={u.id} title={u.name} onClick={() => setAssigneeFilter((f) => (f.includes(u.id) ? f.filter((x) => x !== u.id) : [...f, u.id]))} className={clsx('rounded-full ring-2', assigneeFilter.includes(u.id) ? 'ring-brand-600' : 'ring-white')}>
+            <button key={u.id} title={u.name} onClick={() => filter.setAssigneeFilter((f) => (f.includes(u.id) ? f.filter((x) => x !== u.id) : [...f, u.id]))} className={clsx('rounded-full ring-2', filter.assigneeFilter.includes(u.id) ? 'ring-brand-600' : 'ring-white')}>
               <Avatar user={u} size={28} />
             </button>
           ))}
           {extraAvatars > 0 && <span className="flex h-7 items-center rounded-full bg-slate-100 px-1.5 text-xs text-slate-600 ring-2 ring-white">+{extraAvatars}</span>}
-        </div>
-        <div className="relative" ref={filterRef}>
-          <button className={clsx('btn-default', (filterOpen || filterCount > 0) && 'border-brand-600 bg-brand-50 text-brand-700')} onClick={() => setFilterOpen((o) => !o)}>
-            <Filter size={14} /> Filter{filterCount > 0 ? ` ${filterCount}` : ''}
-          </button>
-          {filterOpen && (
-            <div className="absolute z-30 mt-1 flex w-[520px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-              <div className="flex min-h-[260px]">
-                <div className="w-44 shrink-0 border-r border-slate-200 py-2">
-                  {([['parent', 'Parent'], ['assignee', 'Assignee'], ['status', 'Status'], ['type', 'Work type'], ['labels', 'Labels']] as const).map(([id, label]) => (
-                    <button key={id} className={clsx('flex w-full px-4 py-2 text-left text-sm', filterField === id ? 'bg-slate-100 font-medium' : 'text-slate-700 hover:bg-slate-50')} onClick={() => setFilterField(id)}>{label}</button>
-                  ))}
-                </div>
-                <div className="flex-1 p-4">
-                  {!filterField && <p className="text-sm text-slate-500">Select a field to start creating a filter.</p>}
-                  {filterField === 'parent' && <CheckList options={[{ value: 'none', label: 'No parent' }, ...parentOptions.map((p) => ({ value: p.id, label: `${p.id} ${p.summary}` }))]} selected={parentFilter} onToggle={(v) => toggleVal(parentFilter, setParentFilter, v)} />}
-                  {filterField === 'assignee' && <CheckList options={[{ value: 'none', label: 'Unassigned' }, ...members.map((u) => ({ value: u.id, label: u.name }))]} selected={assigneeFilter} onToggle={(v) => toggleVal(assigneeFilter, setAssigneeFilter, v)} />}
-                  {filterField === 'status' && <CheckList options={STATUSES.map((s) => ({ value: s, label: s }))} selected={statusFilter} onToggle={(v) => toggleVal(statusFilter, setStatusFilter, v)} />}
-                  {filterField === 'type' && <CheckList options={ISSUE_TYPES.filter((t) => t !== 'Epic').map((t) => ({ value: t, label: t }))} selected={typeFilter} onToggle={(v) => toggleVal(typeFilter, setTypeFilter, v)} />}
-                  {filterField === 'labels' && (labelOptions.length ? <CheckList options={labelOptions.map((l) => ({ value: l, label: l }))} selected={labelFilter} onToggle={(v) => toggleVal(labelFilter, setLabelFilter, v)} /> : <p className="text-sm text-slate-500">No labels yet.</p>)}
-                </div>
-              </div>
-              <div className="border-t border-slate-200 px-4 py-2">
-                <button className={clsx('text-sm', filterCount ? 'text-slate-700 hover:underline' : 'text-slate-300')} disabled={!filterCount} onClick={clearFilters}>Clear all</button>
-              </div>
-            </div>
-          )}
         </div>
         {filterCount > 0 && <button className="text-sm text-slate-600 hover:underline" onClick={clearFilters}>Clear filters</button>}
         <label className="flex items-center gap-2 text-sm">
@@ -261,19 +203,6 @@ function CardView({ item, parent, assignee }: { item: WorkItem; parent?: WorkIte
         <PriorityIcon priority={item.priority} />
         <span className="ml-auto"><Avatar user={assignee} size={22} /></span>
       </div>
-    </div>
-  )
-}
-
-function CheckList({ options, selected, onToggle }: { options: { value: string; label: string }[]; selected: string[]; onToggle: (value: string) => void }) {
-  return (
-    <div className="max-h-52 overflow-auto">
-      {options.map((o) => (
-        <label key={o.value} className="flex items-center gap-2 rounded px-1 py-1.5 text-sm hover:bg-slate-50">
-          <input type="checkbox" checked={selected.includes(o.value)} onChange={() => onToggle(o.value)} />
-          <span className="truncate">{o.label}</span>
-        </label>
-      ))}
     </div>
   )
 }

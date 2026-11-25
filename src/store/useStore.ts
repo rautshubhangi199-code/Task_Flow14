@@ -32,7 +32,7 @@ import {
   roleFromAppAccess,
   USER_COLORS,
 } from '../lib/adminUsers'
-import { canGrantOrgAdmin, canManageUsers } from '../lib/permissions'
+import { canCreateWorkItems, canGrantOrgAdmin, canManageUsers } from '../lib/permissions'
 import { mergePersonalSettings } from '../lib/personalSettings'
 
 export type WorkItemPatch = Partial<Omit<WorkItem, 'id' | 'projectId' | 'createdAt'>>
@@ -212,6 +212,8 @@ export const useStore = create<AppState>()(
 
         createItem: (input) => {
           const s = get()
+          const actorUser = s.users.find((u) => u.id === actor())
+          if (!canCreateWorkItems(actorUser)) throw new Error('You do not have permission to create work items.')
           const project = s.projects.find((p) => p.id === input.projectId)
           if (!project) throw new Error('Project not found')
           const counter = project.counter + 1

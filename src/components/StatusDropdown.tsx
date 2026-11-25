@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { Check, ChevronDown, Workflow, X } from 'lucide-react'
+import { Check, ChevronDown, SquareArrowOutUpRight, Workflow, X } from 'lucide-react'
 import { STATUSES, type Status } from '../types'
 import { isDone } from '../lib/utils'
 import { Modal } from './ui'
@@ -17,6 +18,40 @@ const INITIAL_STATUSES = [
   'Re-Open',
   'Done',
 ]
+
+const CHIP_MENU_STATUSES = [
+  'block',
+  'Cancel',
+  'Reject',
+  'To Do',
+  'Daily Running',
+  'Dev Done',
+  'On-Hold',
+  'QA Done',
+]
+
+function canonicalStatus(name: string): Status {
+  const n = name.trim().toLowerCase().replace(/[\s-_]/g, '')
+  if (n === 'todo') return 'To Do'
+  if (n === 'inprogress' || n === 'dailyrunning') return 'In Progress'
+  if (n === 'devdone' || n === 'developersdone') return 'Developers Done'
+  if (n === 'qadone') return 'QA-Done'
+  if (n === 'done') return 'Done'
+  if (n === 'reject') return 'Reject'
+  if (n === 'onhold' || n === 'block') return 'On Hold'
+  if (n === 'drop' || n === 'cancel') return 'Drop'
+  if ((STATUSES as readonly string[]).includes(name)) return name as Status
+  return 'To Do'
+}
+
+function lozengeClass(name: string) {
+  const n = name.trim().toLowerCase()
+  if (['block', 'cancel', 'reject', 'to do', 'drop'].includes(n)) {
+    return 'bg-[#dfe1e6] text-[#42526e]'
+  }
+  if (n === 'done') return 'bg-[#e3fcef] text-[#006644]'
+  return 'bg-[#d2e5fe] text-[#0747a6]'
+}
 
 export function StatusCircleIcon({ status, size = 16 }: { status: string; size?: number }) {
   const s = status.toLowerCase()
@@ -105,10 +140,24 @@ export function StatusDropdown({
   const [editedStatusName, setEditedStatusName] = useState(value)
 
   const [workflowModalOpen, setWorkflowModalOpen] = useState(false)
+  const [explainOpen, setExplainOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
   const showToast = useUi((s) => s.showToast)
+
+  const toggleOpen = () => {
+    setOpen((o) => {
+      const next = !o
+      if (next && triggerRef.current) {
+        const r = triggerRef.current.getBoundingClientRect()
+        setMenuPos({ top: r.bottom + 4, left: r.left })
+      }
+      return next
+    })
+  }
 
   // Keep selected status in list if changed externally
   useEffect(() => {
@@ -121,6 +170,8 @@ export function StatusDropdown({
   useEffect(() => {
     if (!open) return
     const handleClickOutside = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (t.closest('[data-status-dropdown]')) return
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
       }
@@ -137,8 +188,19 @@ export function StatusDropdown({
   }, [open])
 
   const handleSelectStatus = (s: string) => {
-    onChange(s as Status)
+    onChange(variant === 'chip' ? canonicalStatus(s) : (s as Status))
     setOpen(false)
+  }
+
+  const handleViewWorkflow = () => {
+    setOpen(false)
+    if (projectKey) navigate(`/projects/${projectKey}/settings/work-types`)
+    else setWorkflowModalOpen(true)
+  }
+
+  const handleExplainWorkflow = () => {
+    setOpen(false)
+    setExplainOpen(true)
   }
 
   const handleAddStatus = (e: React.FormEvent) => {
@@ -181,8 +243,10 @@ export function StatusDropdown({
       case 'chip':
         return (
           <button
+            ref={triggerRef}
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            data-status-dropdown
+            onClick={toggleOpen}
             className={clsx(
               'inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors',
               open && 'ring-2 ring-blue-500 border-blue-500',
@@ -198,7 +262,7 @@ export function StatusDropdown({
         return (
           <button
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggleOpen}
             className={clsx(
               'flex w-full items-center justify-between rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-2xs hover:border-slate-300 transition-colors',
               open && 'ring-2 ring-blue-500 border-blue-500',
@@ -216,7 +280,7 @@ export function StatusDropdown({
         return (
           <button
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggleOpen}
             className={clsx(
               'flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-700 shadow-2xs hover:bg-slate-50',
               className,
@@ -232,7 +296,7 @@ export function StatusDropdown({
         return (
           <button
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggleOpen}
             className={clsx(
               'flex items-center gap-2 rounded px-3 py-1.5 text-sm font-semibold transition-colors shadow-2xs',
               isDone(value as Status)
@@ -254,8 +318,55 @@ export function StatusDropdown({
     <div ref={containerRef} className="relative inline-block text-left">
       {renderTrigger()}
 
+      {open && variant === 'chip' && createPortal(
+        <div
+          data-status-dropdown
+          className="fixed z-[80] min-w-[220px] overflow-hidden rounded-[8px] border border-[#dfe1e6] bg-white py-1 shadow-[0_8px_16px_rgba(9,30,66,0.25)]"
+          style={{ top: menuPos.top, left: menuPos.left }}
+        >
+          <div className="py-0.5">
+            {CHIP_MENU_STATUSES.map((s) => {
+              const isCurrent = canonicalStatus(s) === canonicalStatus(value)
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => handleSelectStatus(s)}
+                  className={clsx(
+                    'flex w-full items-center px-3 py-[7px] text-left hover:bg-[#f4f5f7]',
+                    isCurrent && 'border-l-[3px] border-l-[#0C66E4] bg-[#f4f5f7] pl-[9px]',
+                  )}
+                >
+                  <span className={clsx('inline-flex rounded-[3px] px-2 py-0.5 text-[13px] font-medium', lozengeClass(s))}>
+                    {s}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="mt-0.5 border-t border-[#dfe1e6] py-1">
+            <button
+              type="button"
+              onClick={handleViewWorkflow}
+              className="flex w-full items-center px-4 py-2.5 text-left text-[15px] text-[#172b4d] hover:bg-[#f4f5f7]"
+            >
+              View workflow
+            </button>
+            <button
+              type="button"
+              onClick={handleExplainWorkflow}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[15px] text-[#172b4d] hover:bg-[#f4f5f7]"
+            >
+              <SquareArrowOutUpRight size={16} className="text-[#44546f]" />
+              Explain workflow
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {/* DROPDOWN MENU - Matches uploaded image */}
-      {open && (
+      {open && variant !== 'chip' && (
         <div
           className={clsx(
             'absolute z-50 mt-1 min-w-[240px] max-w-[320px] rounded-lg border border-slate-200 bg-white py-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100',
@@ -461,6 +572,27 @@ export function StatusDropdown({
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={explainOpen}
+        onClose={() => setExplainOpen(false)}
+        title="Explain workflow"
+        width={480}
+      >
+        <p className="text-sm text-[#44546f]">
+          This work item follows the space workflow. Move it between statuses as work progresses.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {CHIP_MENU_STATUSES.map((s) => (
+            <span key={s} className={clsx('rounded-[3px] px-2 py-0.5 text-[13px] font-medium', lozengeClass(s))}>
+              {s}
+            </span>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button type="button" className="btn-primary" onClick={() => setExplainOpen(false)}>Close</button>
+        </div>
       </Modal>
 
       {/* MODAL 3: MANAGE WORKFLOW */}

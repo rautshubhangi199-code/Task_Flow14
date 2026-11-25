@@ -4,13 +4,14 @@ import clsx from 'clsx'
 import {
   addDays, addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek,
 } from 'date-fns'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useUi } from '../../store/uiStore'
 import { useProject } from './projectContext'
 import { now, STATUS_COLOR } from '../../lib/utils'
 import type { WorkItem } from '../../types'
 import { Avatar, StatusBadge, TypeIcon } from '../../components/ui'
+import { BacklogFilterBar, useBacklogFilter } from './BacklogFilter'
 
 type View = 'day' | 'week' | 'month'
 
@@ -30,7 +31,17 @@ export default function Calendar() {
   const openCreate = useUi((s) => s.openCreateItem)
   const [view, setView] = useState<View>('month')
   const [cursor, setCursor] = useState(now)
-  const items = useMemo(() => allItems.filter((i) => i.projectId === project.id && i.dueDate), [allItems, project.id])
+  const [q, setQ] = useState('')
+  const filter = useBacklogFilter()
+  const projectItems = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
+  const items = useMemo(() => {
+    const ql = q.trim().toLowerCase()
+    return projectItems.filter((i) => {
+      if (!i.dueDate || !filter.matches(i)) return false
+      if (ql && !i.summary.toLowerCase().includes(ql) && !i.id.toLowerCase().includes(ql)) return false
+      return true
+    })
+  }, [projectItems, filter.matches, q])
   const on = (d: Date) => items.filter((i) => i.dueDate === format(d, 'yyyy-MM-dd'))
 
   const move = (dir: 1 | -1) => setCursor((c) => (view === 'month' ? addMonths(c, dir) : view === 'week' ? addWeeks(c, dir) : addDays(c, dir)))
@@ -41,10 +52,27 @@ export default function Calendar() {
     view === 'month'
       ? eachDayOfInterval({ start: startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 }), end: endOfWeek(endOfMonth(cursor), { weekStartsOn: 1 }) })
       : eachDayOfInterval({ start: startOfWeek(cursor, { weekStartsOn: 1 }), end: endOfWeek(cursor, { weekStartsOn: 1 }) })
-  const unscheduled = allItems.filter((i) => i.projectId === project.id && !i.dueDate).length
+  const unscheduled = projectItems.filter((i) => {
+    if (i.dueDate || !filter.matches(i)) return false
+    const ql = q.trim().toLowerCase()
+    if (ql && !i.summary.toLowerCase().includes(ql) && !i.id.toLowerCase().includes(ql)) return false
+    return true
+  }).length
 
   return (
     <div className="p-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative w-56">
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="input pl-8"
+            placeholder="Search calendar"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <BacklogFilterBar users={users} projectItems={projectItems} {...filter.panelProps} />
+      </div>
       <div className="mb-3 flex items-center gap-2">
         <button className="btn-default" onClick={() => setCursor(now())}>Today</button>
         <button className="btn-subtle p-1.5!" onClick={() => move(-1)}><ChevronLeft size={16} /></button>

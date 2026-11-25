@@ -19,8 +19,7 @@ export const NAV_ACCESS: Record<NavKey, Role[]> = {
 
 export const canSee = (user: User | undefined, key: NavKey) => !!user && NAV_ACCESS[key].includes(user.role)
 
-export const canAccessProject = (user: User | undefined, project: Project) =>
-  !!user && (user.role === 'Admin' || project.leadId === user.id || project.memberIds.includes(user.id))
+export const canAccessProject = (user: User | undefined, _project: Project) => !!user
 
 export const canCreateSpace = (user: User | undefined) => !!user && (user.role === 'Admin' || user.role === 'Project Manager')
 
@@ -34,6 +33,9 @@ export const canAccessSettings = (user: User | undefined) =>
   !!user && (user.role === 'Admin' || user.orgAdmin || user.adminAccess === 'org-admin' || user.adminAccess === 'user-access-admin')
 
 export const canManageUsers = canAccessSettings
+
+/** Invite users, create tasks, and add epics — Admin only. */
+export const canCreateWorkItems = canAccessSettings
 
 export const canGrantOrgAdmin = (user: User | undefined) =>
   !!user && (user.role === 'Admin' || user.orgAdmin || user.adminAccess === 'org-admin')

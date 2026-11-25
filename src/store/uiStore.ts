@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { WorkItemInput } from '../types'
+import { canCreateWorkItems } from '../lib/permissions'
+import { useStore } from './useStore'
 
 export interface Toast {
   id: number
@@ -26,7 +28,12 @@ export const useUi = create<UiState>()((set, get) => ({
   createItemDefaults: {},
   createSpaceOpen: false,
   toasts: [],
-  openCreateItem: (defaults = {}) => set({ createItemOpen: true, createItemDefaults: defaults }),
+  openCreateItem: (defaults = {}) => {
+    const s = useStore.getState()
+    const user = s.users.find((u) => u.id === s.currentUserId)
+    if (!canCreateWorkItems(user)) return
+    set({ createItemOpen: true, createItemDefaults: defaults })
+  },
   closeCreateItem: () => set({ createItemOpen: false, createItemDefaults: {} }),
   setCreateSpaceOpen: (open) => set({ createSpaceOpen: open }),
   showToast: (message, link) => {

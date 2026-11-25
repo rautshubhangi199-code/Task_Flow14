@@ -5,6 +5,7 @@ import { useProject } from './projectContext'
 import { Avatar, ProgressBar, TypeIcon } from '../../components/ui'
 import { ISSUE_TYPES, STATUSES } from '../../types'
 import { fmtDate, isDone, nowMs, STATUS_COLOR, timeAgo } from '../../lib/utils'
+import { BacklogFilterBar, useBacklogFilter } from './BacklogFilter'
 
 export default function Summary() {
   const project = useProject()
@@ -12,7 +13,9 @@ export default function Summary() {
   const history = useStore((s) => s.history)
   const users = useStore((s) => s.users)
   const sprints = useStore((s) => s.sprints)
-  const items = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
+  const filter = useBacklogFilter()
+  const projectItems = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
+  const items = useMemo(() => projectItems.filter(filter.matches), [projectItems, filter.matches])
   const done = items.filter((i) => isDone(i.status)).length
   const assigned = items.filter((i) => i.assigneeId).length
   const pct = items.length ? Math.round((done / items.length) * 100) : 0
@@ -29,6 +32,9 @@ export default function Summary() {
 
   return (
     <div className="space-y-6 p-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <BacklogFilterBar users={users} projectItems={projectItems} {...filter.panelProps} />
+      </div>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           ['Completed', done, 'in total'],

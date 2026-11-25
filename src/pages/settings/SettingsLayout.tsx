@@ -1,7 +1,7 @@
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { useCurrentUser } from '../../store/hooks'
-import { canAccessSettings } from '../../lib/permissions'
+import { canAccessSettings, canGrantOrgAdmin } from '../../lib/permissions'
 
 const JIRA_ADMIN = [
   { to: '/settings/system', label: 'System' },
@@ -17,12 +17,13 @@ export default function SettingsLayout() {
   const user = useCurrentUser()
   const location = useLocation()
   const workItems = location.pathname.includes('/settings/work-items')
+  const usersArea = location.pathname.startsWith('/settings/users')
   if (!canAccessSettings(user)) {
     return <Navigate to="/for-you" replace />
   }
   return (
     <div className="flex min-h-full flex-col md:flex-row">
-      {!workItems && <aside className="w-full shrink-0 border-b border-slate-200 bg-slate-50 md:w-56 md:border-b-0 md:border-r">
+      {!workItems && !usersArea && <aside className="w-full shrink-0 border-b border-slate-200 bg-slate-50 md:w-56 md:border-b-0 md:border-r">
         <div className="px-4 py-4 text-sm font-semibold text-slate-800">Settings</div>
         <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Jira admin</div>
         {JIRA_ADMIN.map((l) => (
@@ -30,12 +31,16 @@ export default function SettingsLayout() {
             {l.label}
           </NavLink>
         ))}
+        {canGrantOrgAdmin(user) && (
+          <>
         <div className="mt-3 px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Atlassian admin</div>
         {ATLASSIAN_ADMIN.map((l) => (
           <NavLink key={l.to} to={l.to} className={({ isActive }) => clsx('block px-4 py-1.5 text-sm', isActive ? 'bg-brand-50 font-medium text-brand-700' : 'text-slate-700 hover:bg-slate-100')}>
             {l.label}
           </NavLink>
         ))}
+          </>
+        )}
       </aside>}
       <div className="min-w-0 flex-1">
         <Outlet />

@@ -70,6 +70,8 @@ export interface AuditLog {
 
 export interface InviteUsersInput {
   emails: string[]
+  username?: string
+  password?: string
   adminAccess: AdminAccess
   appAccess: AppAccess[]
   groupIds: string[]

@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { addDays, format } from 'date-fns'
-import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
 import { ChevronDown, ChevronRight, Edit3, Filter, MoreHorizontal, Pencil, Plus, Search } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { useProject } from './projectContext'
-import { sprintService, workItemService } from '../../services/api'
+import { sprintService, userAdminService, workItemService } from '../../services/api'
 import { canManageSprints } from '../../lib/permissions'
 import { fmtDate, isDone, todayStr } from '../../lib/utils'
 import { ISSUE_TYPES, PRIORITIES, STATUSES, type Priority, type Sprint, type Status, type WorkItem } from '../../types'
@@ -87,10 +87,9 @@ function RowView({ item, overlay, selected, issueOpen, onSelect, onOpen }: { ite
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className={clsx('min-w-0 flex-1 truncate cursor-pointer hover:underline', isDone(item.status) && 'text-slate-400 line-through')}
+            className={clsx('min-w-0 flex-1 truncate cursor-grab hover:underline', isDone(item.status) && 'text-slate-400 line-through')}
             onClick={() => onOpen ? onOpen(item.id) : setEditingSummary(true)}
-            onPointerDown={(e) => e.stopPropagation()}
-            title="Open work item"
+            title="Drag to a sprint, or click to open"
           >
             {item.summary}
           </span>
@@ -313,11 +312,25 @@ export default function Backlog() {
   const filterRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const manage = canManageSprints(me)
 
   const sprints = useMemo(() => allSprints.filter((s) => s.projectId === project.id), [allSprints, project.id])
-  const members = users.filter((u) => project.memberIds.includes(u.id) || project.leadId === u.id)
+  const members = users
+
+  useEffect(() => {
+    let cancelled = false
+    void userAdminService.list()
+      .then((rows) => {
+        if (cancelled || !rows.length) return
+        const existing = useStore.getState().users
+        const seen = new Set(existing.map((u) => `${u.id}|${u.email.toLowerCase()}`))
+        const extra = rows.filter((u) => !seen.has(`${u.id}|${u.email.toLowerCase()}`) && !existing.some((e) => e.id === u.id || e.email.toLowerCase() === u.email.toLowerCase()))
+        if (extra.length) useStore.setState({ users: [...existing, ...extra] })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   const items = useMemo(() => {
     const ql = q.trim().toLowerCase()
     return allItems.filter((i) => {
@@ -368,13 +381,35 @@ export default function Backlog() {
   const planned = sprints.filter((s) => s.state === 'planned')
   const completed = sprints.filter((s) => s.state === 'completed')
   const backlogItems = items.filter((i) => !i.sprintId || !sprints.some((s) => s.id === i.sprintId))
+  const droppableIds = useMemo(
+    () => new Set(['backlog', ...sprints.filter((s) => s.state !== 'completed').map((s) => s.id)]),
+    [sprints],
+  )
+
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointerHits = pointerWithin(args)
+    const pointerContainers = pointerHits.filter((c) => droppableIds.has(String(c.id)))
+    if (pointerContainers.length) return pointerContainers
+    const rectHits = rectIntersection(args).filter((c) => droppableIds.has(String(c.id)))
+    return rectHits.length ? rectHits : pointerHits
+  }
+
+  const sprintForOver = (overId: string): string | null => {
+    if (overId === 'backlog') return null
+    if (droppableIds.has(overId) && overId !== 'backlog') return overId
+    const overItem = allItems.find((i) => i.id === overId)
+    if (!overItem) return null
+    return overItem.sprintId && droppableIds.has(overItem.sprintId) ? overItem.sprintId : null
+  }
 
   const onDragEnd = (e: DragEndEvent) => {
     setActiveId(null)
     if (!e.over) return
-    const target = e.over.id === 'backlog' ? null : String(e.over.id)
     const item = allItems.find((i) => i.id === e.active.id)
-    if (item && item.sprintId !== target) workItemService.update(item.id, { sprintId: target })
+    if (!item) return
+    const nextSprintId = sprintForOver(String(e.over.id))
+    const currentSprintId = item.sprintId && droppableIds.has(item.sprintId) ? item.sprintId : null
+    if (currentSprintId !== nextSprintId) workItemService.update(item.id, { sprintId: nextSprintId })
   }
 
   const toggleSelect = (id: string, on: boolean) => setSelected((s) => (on ? [...s, id] : s.filter((x) => x !== id)))
@@ -553,7 +588,7 @@ export default function Backlog() {
       </div>
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
-      <DndContext sensors={sensors} onDragStart={(e) => setActiveId(String(e.active.id))} onDragCancel={() => setActiveId(null)} onDragEnd={onDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={(e) => setActiveId(String(e.active.id))} onDragCancel={() => setActiveId(null)} onDragEnd={onDragEnd}>
         {active.map(sprintBlock)}
         {planned.map(sprintBlock)}
         <BacklogSection
@@ -707,7 +742,7 @@ function SprintSection({ sprint, items, selected, allOn, manage, hasActive, onTo
   const [open, setOpen] = useState(true)
   const dates = sprint.startDate && sprint.endDate ? `${fmtDate(sprint.startDate)} – ${fmtDate(sprint.endDate)}` : null
   return (
-    <div className="rounded-lg bg-slate-50 p-2">
+    <div ref={setNodeRef} className={clsx('rounded-lg bg-slate-50 p-2', isOver && 'ring-2 ring-brand-500 ring-inset')}>
       <div className="flex flex-wrap items-center gap-2 px-1 py-1">
         <input type="checkbox" checked={allOn} onChange={(e) => onToggleAll(e.target.checked)} disabled={items.length === 0} />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 font-semibold">
@@ -741,7 +776,7 @@ function SprintSection({ sprint, items, selected, allOn, manage, hasActive, onTo
         </div>
       </div>
       {open && (
-        <div ref={setNodeRef} className={clsx('mt-1 min-h-10 rounded border border-dashed', isOver ? 'border-brand-500 bg-brand-50' : 'border-transparent')}>
+        <div className={clsx('mt-1 min-h-[72px] rounded border border-dashed', isOver ? 'border-brand-500 bg-brand-50' : 'border-transparent')}>
           {items.map((i) => <Row key={i.id} item={i} selected={selected.includes(i.id)} issueOpen={openIssueId === i.id} onSelect={onSelect} onOpen={onOpenIssue} />)}
           {items.length === 0 && <div className="py-3 text-center text-xs text-slate-400">Plan this sprint by dragging work items here</div>}
           <button onClick={onCreate} className="flex w-full items-center gap-1 px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-100"><Plus size={14} /> Create</button>
@@ -767,7 +802,7 @@ function BacklogSection({ items, selected, manage, onToggleAll, onSelect, onCrea
   const ids = items.map((i) => i.id)
   const allOn = ids.length > 0 && ids.every((id) => selected.includes(id))
   return (
-    <div className="rounded-lg bg-slate-50 p-2">
+    <div ref={setNodeRef} className={clsx('rounded-lg bg-slate-50 p-2', isOver && 'ring-2 ring-brand-500 ring-inset')}>
       <div className="flex flex-wrap items-center gap-2 px-1 py-1">
         <input type="checkbox" checked={allOn} onChange={(e) => onToggleAll(e.target.checked)} disabled={items.length === 0} />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 font-semibold">
@@ -778,7 +813,7 @@ function BacklogSection({ items, selected, manage, onToggleAll, onSelect, onCrea
         {manage && <button className="btn-default ml-auto" onClick={onCreateSprint}><Plus size={14} /> Create sprint</button>}
       </div>
       {open && (
-        <div ref={setNodeRef} className={clsx('mt-1 min-h-10 rounded border border-dashed', isOver ? 'border-brand-500 bg-brand-50' : 'border-transparent')}>
+        <div className={clsx('mt-1 min-h-[72px] rounded border border-dashed', isOver ? 'border-brand-500 bg-brand-50' : 'border-transparent')}>
           {items.map((i) => <Row key={i.id} item={i} selected={selected.includes(i.id)} issueOpen={openIssueId === i.id} onSelect={onSelect} onOpen={onOpenIssue} />)}
           {items.length === 0 && <div className="py-3 text-center text-xs text-slate-400">Your backlog is empty</div>}
           <button onClick={onCreate} className="flex w-full items-center gap-1 px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-100"><Plus size={14} /> Create</button>
