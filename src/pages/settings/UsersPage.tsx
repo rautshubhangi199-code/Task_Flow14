@@ -7,7 +7,8 @@ import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { userAdminService } from '../../services/api'
 import { API_ENDPOINTS } from '../../Network/apiEndpoints'
-import { getAccessToken, http } from '../../services/http'
+import { asList, asRecord, getAccessToken, http } from '../../services/http'
+import { mapRoleName } from '../../services/catalog'
 import { ACCOUNT_TYPES, ADMIN_ACCESS_OPTIONS, EMAIL_RE } from '../../lib/adminUsers'
 import { canGrantOrgAdmin } from '../../lib/permissions'
 import type { AccountStatus, AccountType, AdminAccess, OrgApp, Role, User } from '../../types'
@@ -67,6 +68,20 @@ function isAdminAccount(user: User | undefined) {
   return !!user && user.role === 'Admin'
 }
 
+function roleNamesFromPayload(payload: unknown): string[] {
+  const rec = asRecord(payload)
+  const nested = rec.data && typeof rec.data === 'object' ? rec.data : rec
+  const fromKeys = asList<unknown>(nested)
+  const rolesKey = asRecord(nested).roles
+  const rows = fromKeys.length ? fromKeys : Array.isArray(rolesKey) ? rolesKey : []
+  const names = rows.map((row) => {
+    if (typeof row === 'string') return row.trim()
+    const r = asRecord(row)
+    return String(r.name ?? r.role ?? r.role_name ?? '').trim()
+  }).filter(Boolean)
+  return [...new Set(names)]
+}
+
 export default function UsersPage() {
   const me = useCurrentUser()
   const org = useStore((s) => s.organization)
@@ -85,7 +100,8 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
   const [accountType, setAccountType] = useState<AccountType | ''>('')
-  const [role, setRole] = useState<Role | ''>('')
+  const [role, setRole] = useState('')
+  const [roleOptions, setRoleOptions] = useState<string[]>(ROLES)
   const [appId, setAppId] = useState('')
   const [status, setStatus] = useState<AccountStatus | ''>('')
   const [managed, setManaged] = useState<'' | 'yes' | 'no'>('')
@@ -113,10 +129,27 @@ export default function UsersPage() {
           return await res.json() as Record<string, unknown>
         }
       }
-      const [rows, countPayload] = await Promise.all([
+      const loadRoles = async () => {
+        try {
+          return await http.get<unknown>(API_ENDPOINTS.GET_all_roles, { organization_id })
+        } catch {
+          const token = getAccessToken()
+          const res = await fetch(`http://localhost:8000/api/${API_ENDPOINTS.GET_all_roles}?organization_id=${organization_id}`, {
+            headers: {
+              Accept: '*/*',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          })
+          return await res.json()
+        }
+      }
+      const [rows, countPayload, rolesPayload] = await Promise.all([
         userAdminService.list(),
         loadCounts().catch(() => ({})),
+        loadRoles().catch(() => []),
       ])
+      const apiRoles = roleNamesFromPayload(rolesPayload)
+      if (apiRoles.length) setRoleOptions(apiRoles)
       const rec = (countPayload && typeof countPayload === 'object' && !Array.isArray(countPayload)
         ? countPayload
         : {}) as Record<string, unknown>
@@ -152,7 +185,7 @@ export default function UsersPage() {
     return directoryUsers.filter((u) => {
       if (query && !u.name.toLowerCase().includes(query) && !u.email.toLowerCase().includes(query)) return false
       if (accountType && u.accountType !== accountType) return false
-      if (role && u.role !== role) return false
+      if (role && u.role !== role && u.role !== mapRoleName(role) && u.role.toLowerCase() !== role.toLowerCase()) return false
       if (appId && !(u.appAccess ?? []).some((a) => a.appId === appId)) return false
       if (status && u.accountStatus !== status) return false
       if (managed === 'yes' && !u.managed) return false
@@ -314,9 +347,9 @@ export default function UsersPage() {
           <select className="input w-full sm:w-auto" value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType | '')}>
             {ACCOUNT_TYPES.map((o) => <option key={o.label} value={o.value}>{o.value ? o.label : 'Account type'}</option>)}
           </select>
-          <select className="input w-full sm:w-auto" value={role} onChange={(e) => setRole(e.target.value as Role | '')}>
+          <select className="input w-full sm:w-auto" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="">Role</option>
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
           <select className="input w-full sm:w-auto" value={appId} onChange={(e) => setAppId(e.target.value)}>
             <option value="">Apps</option>
@@ -423,7 +456,7 @@ function UserRow({
             <div className="font-medium text-[#0C66E4] hover:underline">{user.name}</div>
             <div className="break-all text-xs text-[#44546F]">{user.email}</div>
             {(apps || groupNames) ? (
-              <div className="text-xs text-slate-400">{user.role}{apps ? ` · ${apps}` : ''}{groupNames ? ` · ${groupNames}` : ''}</div>
+              <div className="text-xs text-slate-400">{user.designation ?? user.role}{apps ? ` · ${apps}` : ''}{groupNames ? ` · ${groupNames}` : ''}</div>
             ) : null}
           </div>
         </button>

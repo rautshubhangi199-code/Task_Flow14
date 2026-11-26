@@ -66,6 +66,7 @@ export function normalizeUser(user: UserSeed, views?: { userId: string; at: stri
     name: user.name,
     email: user.email,
     role: user.role,
+    designation: user.designation ?? user.role,
     team: user.team,
     color: user.color,
     accountStatus: user.accountStatus ?? 'active',

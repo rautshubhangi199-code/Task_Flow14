@@ -83,13 +83,14 @@ export function mapUser(raw: unknown, index = 0): User {
   const pk = rawPk(r) ?? 0
   const id = rawId(r, 'id') || String(pk)
   rememberPk('user', id, pk)
-  const roleRaw = nestedName(r.role ?? r.role_name ?? r.app_roles)
+  const roleRaw = nestedName(r.role ?? r.role_name ?? r.designation ?? r.app_roles)
   const name = String(r.display_name ?? r.name ?? r.username ?? r.email ?? `User ${id}`)
   return normalizeUser({
     id,
     name,
     email: String(r.email ?? r.email_address ?? (r.display_name ? `${String(r.display_name).replace(/\s+/g, '.').toLowerCase()}@taskflow.local` : '')),
     role: mapRoleName(roleRaw || 'Developer'),
+    designation: roleRaw || mapRoleName(roleRaw || 'Developer'),
     team: teamNameForId(r.team ?? r.group_membership) ?? String(r.team ?? r.group_membership ?? ''),
     color: USER_COLORS[index % USER_COLORS.length],
     accountStatus: mapAccountStatus(r.account_status ?? r.status),

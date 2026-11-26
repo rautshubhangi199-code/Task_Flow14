@@ -547,8 +547,8 @@ function FilterSearchInner({
               <div className="mt-2 flex justify-end gap-2">
                 <button type="button" className="btn-subtle py-1 text-xs" onClick={() => setAskOpen(false)}>Cancel</button>
                 <button type="button" className="btn-primary py-1 text-xs" onClick={askAi}>Search</button>
-              </div>
-            </div>
+        </div>
+      </div>
           )}
         </div>
         {tabBtn('basic', 'Basic')}
@@ -564,7 +564,7 @@ function FilterSearchInner({
                 value={basic.text}
                 onChange={(e) => setB({ text: e.target.value })}
               />
-            </div>
+          </div>
             <Chip label="Space" value={lockProjectKey ? projects.find((p) => p.key === lockProjectKey)?.name ?? projectLabel : projectLabel}>
               {(close) => (
                 <>
@@ -821,9 +821,9 @@ function FilterSearchInner({
           <div className="flex min-w-[280px] flex-1 items-center gap-2">
             <input
               className="h-8 flex-1 rounded-md border border-slate-300 bg-white px-2.5 font-mono text-[13px] outline-none focus:border-[#0c66e4]"
-              value={text}
+                value={text}
               placeholder='project = CP AND status = "In Progress"'
-              onChange={(e) => setText(e.target.value)}
+                onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   setApplied(text)
@@ -841,11 +841,11 @@ function FilterSearchInner({
         </button>
       </div>
 
-      {result.error && (
+        {result.error && (
         <div className="mb-3 flex items-center gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <AlertCircle size={16} /> {result.error}
-      </div>
-      )}
+            <AlertCircle size={16} /> {result.error}
+          </div>
+        )}
 
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[1760px] table-fixed border-collapse [&_th]:border [&_th]:border-[#dfe1e6] [&_td]:border [&_td]:border-[#dfe1e6]">
@@ -942,12 +942,12 @@ function FilterSearchInner({
                               className="h-3.5 w-3.5 accent-[#0c66e4]"
                             />
                             {label}
-                          </label>
+        </label>
                         ))}
                         {visibleColOptions.length === 0 && (
                           <div className="px-3 py-2 text-[13px] text-[#6b778c]">No columns match</div>
                         )}
-                      </div>
+      </div>
                       <div className="flex items-center justify-between border-t border-[#dfe1e6] px-3 py-2 text-[12px] text-[#6b778c]">
                         <button
                           type="button"
@@ -961,7 +961,7 @@ function FilterSearchInner({
                     </div>
                   )}
                 </Dropdown>
-              </th>
+                </th>
             </tr>
           </thead>
           <tbody>
@@ -1522,7 +1522,7 @@ function FilterSearchInner({
       </div>
 
       <div className="flex items-center justify-center gap-3 pt-3 text-[13px] text-slate-600">
-        {pages > 1 && (
+      {pages > 1 && (
           <button type="button" className="btn-subtle py-0.5" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button>
         )}
         <span className="inline-flex items-center gap-1.5">

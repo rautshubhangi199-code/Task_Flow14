@@ -1,10 +1,12 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { BarChart3, Boxes, Building2, Info, Rocket, Target, X } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { userAdminService } from '../../services/api'
+import { API_ENDPOINTS } from '../../Network/apiEndpoints'
+import { asList, asRecord, getAccessToken, http } from '../../services/http'
 import { ADMIN_ACCESS_OPTIONS, EMAIL_RE, parseInviteEmails } from '../../lib/adminUsers'
 import { canGrantOrgAdmin, canManageUsers } from '../../lib/permissions'
 import type { AdminAccess, AppAccess } from '../../types'
@@ -41,6 +43,19 @@ function AppGlyph({ kind }: { kind: InviteApp['icon'] }) {
   return wrap(<Rocket size={16} className="text-white" />, 'bg-slate-200')
 }
 
+function designationNamesFromPayload(payload: unknown): string[] {
+  const rows = Array.isArray(payload)
+    ? payload
+    : asList<unknown>(asRecord(payload).data ?? payload)
+  const extra = asRecord(asRecord(payload).data ?? payload).roles
+  const list = rows.length ? rows : Array.isArray(extra) ? extra : []
+  return [...new Set(list.map((row) => {
+    if (typeof row === 'string') return row.trim()
+    const r = asRecord(row)
+    return String(r.role ?? r.name ?? r.role_name ?? '').trim()
+  }).filter(Boolean))]
+}
+
 function inviteApps(): InviteApp[] {
   return [
     { id: 'jira', name: 'Jira', site: 'org', plan: 'Standard', icon: 'jira', defaultRole: 'User' },
@@ -63,6 +78,8 @@ export default function InviteUsersPage() {
   const [emailsRaw, setEmailsRaw] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [designation, setDesignation] = useState('')
+  const [designations, setDesignations] = useState<string[]>([])
   const [adminAccess, setAdminAccess] = useState<AdminAccess>('none')
   const [appRoles, setAppRoles] = useState<Record<string, string>>(() =>
     Object.fromEntries(inviteApps().map((a) => [a.id, a.defaultRole])),
@@ -75,6 +92,30 @@ export default function InviteUsersPage() {
 
   const grantOrg = canGrantOrgAdmin(me)
   const canSend = parseInviteEmails(emailsRaw).length > 0 && !submitting
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const token = getAccessToken()
+      const headers = { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      let payload: unknown = []
+      try {
+        payload = await http.get(API_ENDPOINTS.GET_all_roles)
+      } catch {
+        try {
+          const res = await fetch(`http://localhost:8000/api/${API_ENDPOINTS.GET_all_roles}`, { headers })
+          payload = await res.json()
+        } catch {
+          payload = []
+        }
+      }
+      if (cancelled) return
+      const names = designationNamesFromPayload(payload)
+      if (names.length) setDesignations(names)
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [])
 
   const submit = async () => {
     const emails = parseInviteEmails(emailsRaw)
@@ -98,6 +139,7 @@ export default function InviteUsersPage() {
         emails,
         username,
         password,
+        role: designation || undefined,
         adminAccess,
         appAccess,
         groupIds: groupId ? [groupId] : [],
@@ -180,6 +222,20 @@ export default function InviteUsersPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+        </div>
+
+        <div className="mt-5">
+          <label className="mb-1.5 block text-sm font-medium text-slate-800">Designation</label>
+          <select
+            className="h-10 w-full max-w-[280px] rounded-[3px] border border-slate-400 bg-white px-3 text-[15px] outline-none focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
+            value={designation}
+            onChange={(e) => setDesignation(e.target.value)}
+          >
+            <option value="">Select designation</option>
+            {designations.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
         </div>
 
         <div className="mt-5">

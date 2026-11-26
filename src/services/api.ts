@@ -553,6 +553,7 @@ export const userAdminService = {
       email_addresses: input.emails.join(','),
       username: input.username,
       password: input.password,
+      role: input.role,
       administrator_access: adminAccessApi(input.adminAccess),
       app_selection: input.appAccess[0]?.appId ?? 'Taskflow',
       app_roles: input.appAccess[0]?.role ?? 'User',

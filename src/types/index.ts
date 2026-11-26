@@ -31,6 +31,7 @@ export interface User {
   name: string
   email: string
   role: Role
+  designation?: string
   team: string
   color: string
   accountStatus: AccountStatus
@@ -72,6 +73,7 @@ export interface InviteUsersInput {
   emails: string[]
   username?: string
   password?: string
+  role?: string
   adminAccess: AdminAccess
   appAccess: AppAccess[]
   groupIds: string[]
