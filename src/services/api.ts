@@ -6,6 +6,7 @@ import { API_ENDPOINTS } from '../Network/apiEndpoints'
 import { useStore, type ProjectInput, type WorkItemPatch } from '../store/useStore'
 import { mergePersonalSettings } from '../lib/personalSettings'
 import { asList, asRecord, http } from './http'
+import { pkOf, rememberPk } from './catalog'
 import { mapUser } from './mappers'
 import { canCreateWorkItems, canManageUsers } from '../lib/permissions'
 import type { AccountStatus, AdminAccess, InviteUsersInput, IssueType, LinkType, PersonalSettings, SavedFilter, User, WorkItem, WorkItemInput } from '../types'
@@ -73,6 +74,63 @@ async function apiUserId(localUserId: string | null | undefined): Promise<number
   })
   const id = Number(match?.id ?? match?.user)
   return Number.isFinite(id) ? id : undefined
+}
+
+function workItemListRows(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data as Record<string, unknown>[]
+  const rec = asRecord(data)
+  for (const key of ['work_items', 'workItems', 'results', 'items', 'data', 'records']) {
+    if (Array.isArray(rec[key])) return rec[key] as Record<string, unknown>[]
+  }
+  return asList<Record<string, unknown>>(data)
+}
+
+async function apiWorkItemPk(localId: string, projectId?: string): Promise<number | undefined> {
+  const cached = pkOf('item', localId)
+  if (cached != null) return cached
+  const direct = num(localId)
+  if (direct) return direct
+  const pid = projectId ? await apiProjectId(projectId).catch(() => undefined) : undefined
+  const rows = workItemListRows(
+    await http.get(API_ENDPOINTS.GET_all_work_items, pid ? { project_id: pid } : {}).catch(() => []),
+  )
+  const match = rows.find((r) => {
+    const key = String(r.work_item_id ?? r.key ?? '')
+    return key === localId || String(r.id ?? r.pk ?? '') === localId
+  })
+  for (const value of [match?.pk, match?.id]) {
+    const n = Number(value)
+    if (Number.isFinite(n) && !String(value).includes('-')) {
+      rememberPk('item', localId, n)
+      return n
+    }
+  }
+  const tail = String(localId).match(/(\d+)$/)
+  return tail ? Number(tail[1]) : undefined
+}
+
+async function apiSprintPk(localId: string): Promise<number | undefined> {
+  const cached = pkOf('sprint', localId)
+  if (cached != null) return cached
+  const direct = num(localId)
+  if (direct) return direct
+  const local = st().sprints.find((s) => s.id === localId)
+  const pid = local ? await apiProjectId(local.projectId).catch(() => undefined) : undefined
+  const data = await http.get(API_ENDPOINTS.GET_all_sprints, pid ? { project_id: pid } : {}).catch(() => [])
+  const rec = asRecord(data)
+  const rows = Array.isArray(data)
+    ? data as Record<string, unknown>[]
+    : asList<Record<string, unknown>>(Array.isArray(rec.sprints) ? rec.sprints : data)
+  const match = rows.find((r) => {
+    if (String(r.id ?? r.pk ?? '') === localId) return true
+    return !!local && String(r.name ?? '').toLowerCase() === local.name.toLowerCase()
+  })
+  const pk = Number(match?.id ?? match?.pk)
+  if (Number.isFinite(pk) && !String(match?.id ?? '').startsWith('s_')) {
+    rememberPk('sprint', localId, pk)
+    return pk
+  }
+  return undefined
 }
 
 async function apiWorkItemTypeId(name: string): Promise<number | undefined> {
@@ -267,8 +325,13 @@ export const workItemService = {
     return ok(undefined)
   },
   remove: (id: string) => {
+    const projectId = st().items.find((i) => i.id === id)?.projectId
     st().deleteItem(id)
-    fire(() => http.delete(API_ENDPOINTS.DELETE_work_item, { id: num(id) ?? id }))
+    fire(async () => {
+      const pk = await apiWorkItemPk(id, projectId)
+      if (pk == null) return
+      await http.delete(API_ENDPOINTS.DELETE_work_item, { id: pk })
+    })
     return ok(undefined)
   },
   addLink: (id: string, type: LinkType, targetId: string) => {
@@ -337,28 +400,31 @@ export const sprintService = {
   start: (sprintId: string, input?: { name: string; goal: string; startDate: string; endDate: string }) => {
     if (input) st().startSprint(sprintId, input)
     else st().setSprintState(sprintId, 'active')
-    fire(() =>
-      http.patch(API_ENDPOINTS.UPDATE_sprint, {
-        id: num(sprintId) ?? sprintId,
+    fire(async () => {
+      const id = await apiSprintPk(sprintId)
+      if (id == null) return
+      await http.patch(API_ENDPOINTS.UPDATE_sprint, {
+        id,
         status: 'active',
         name: input?.name,
         goal: input?.goal,
         start_date: input?.startDate,
         end_date: input?.endDate,
-      }),
-    )
+      })
+    })
     return ok(undefined)
   },
   complete: (sprintId: string, moveIncompleteTo: string | null) => {
     st().completeSprint(sprintId, moveIncompleteTo)
-    fire(() =>
-      http.post(API_ENDPOINTS.POST_complete_sprint, {
-        sprint_id: num(sprintId) ?? sprintId,
-        ...(moveIncompleteTo
-          ? { move_to_sprint_id: num(moveIncompleteTo) ?? moveIncompleteTo }
-          : { move_to_backlog: true }),
-      }),
-    )
+    fire(async () => {
+      const id = await apiSprintPk(sprintId)
+      if (id == null) return
+      const moveTo = moveIncompleteTo ? await apiSprintPk(moveIncompleteTo) : undefined
+      await http.post(API_ENDPOINTS.POST_complete_sprint, {
+        sprint_id: id,
+        ...(moveTo != null ? { move_to_sprint_id: moveTo } : { move_to_backlog: true }),
+      })
+    })
     return ok(undefined)
   },
   list: (projectId: string) => ok(st().sprints.filter((s) => s.projectId === projectId)),

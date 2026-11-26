@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { addDays, format } from 'date-fns'
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection, useDraggable, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
-import { ChevronDown, ChevronRight, Edit3, Filter, MoreHorizontal, Pencil, Plus, Search } from 'lucide-react'
+import { ChevronDown, ChevronRight, Filter, MoreHorizontal, Pencil, Plus, Search } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
@@ -41,17 +41,6 @@ function RowView({ item, overlay, selected, issueOpen, onSelect, onOpen }: { ite
   const assignee = users.find((u) => u.id === item.assigneeId)
   const parent = items.find((i) => i.id === item.parentId)
 
-  const [editingSummary, setEditingSummary] = useState(false)
-  const [summaryText, setSummaryText] = useState(item.summary)
-
-  const handleSaveSummary = () => {
-    const trimmed = summaryText.trim()
-    if (trimmed && trimmed !== item.summary) {
-      workItemService.update(item.id, { summary: trimmed })
-    }
-    setEditingSummary(false)
-  }
-
   return (
     <div className={clsx('group flex items-center gap-2 border-b border-slate-100 bg-white px-2 py-1.5 text-sm hover:bg-slate-50', overlay && 'w-[860px] rounded border shadow-xl', selected && 'bg-brand-50', issueOpen && 'bg-blue-50')}>
       {onSelect && (
@@ -60,53 +49,20 @@ function RowView({ item, overlay, selected, issueOpen, onSelect, onOpen }: { ite
       <TypeIcon type={item.type} />
       <button
         type="button"
-        className="w-[72px] shrink-0 text-left text-xs font-semibold text-slate-600 hover:text-blue-600 hover:underline"
+        className="shrink-0 whitespace-nowrap text-xs font-semibold text-slate-500 hover:text-blue-600 hover:underline"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); onOpen?.(item.id) }}
       >
         {item.id}
       </button>
-
-      {/* Inline editable summary */}
-      {editingSummary ? (
-        <input
-          autoFocus
-          className="flex-1 rounded border border-blue-500 px-1.5 py-0.5 text-xs text-slate-900 outline-none"
-          value={summaryText}
-          onChange={(e) => setSummaryText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSaveSummary()
-            if (e.key === 'Escape') {
-              setSummaryText(item.summary)
-              setEditingSummary(false)
-            }
-          }}
-          onBlur={handleSaveSummary}
-          onPointerDown={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span
-            className={clsx('min-w-0 flex-1 truncate cursor-grab hover:underline', isDone(item.status) && 'text-slate-400 line-through')}
-            onClick={() => onOpen ? onOpen(item.id) : setEditingSummary(true)}
-            title="Drag to a sprint, or click to open"
-          >
-            {item.summary}
-          </span>
-          <button
-            type="button"
-            className="rounded p-0.5 text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-slate-700"
-            onClick={(e) => {
-              e.stopPropagation()
-              setEditingSummary(true)
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            title="Edit summary"
-          >
-            <Edit3 size={12} />
-          </button>
-        </div>
-      )}
+      <button
+        type="button"
+        className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-slate-600 hover:text-blue-600 hover:underline"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onOpen?.(item.id) }}
+      >
+        {item.summary}
+      </button>
 
       {/* Parent / Epic pill if present */}
       {parent && (
@@ -313,7 +269,7 @@ export default function Backlog() {
   const [selected, setSelected] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
-  const manage = canManageSprints(me)
+  const manage = me?.role === 'Admin'
 
   const sprints = useMemo(() => allSprints.filter((s) => s.projectId === project.id), [allSprints, project.id])
   const members = users
@@ -446,7 +402,7 @@ export default function Backlog() {
         hasActive={active.length > 0}
         onToggleAll={(on) => setAll(ids, on)}
         onSelect={toggleSelect}
-        onCreate={() => openCreate({ projectId: project.id, sprintId: s.id })}
+        onCreate={() => openCreate({ projectId: project.id })}
         onStart={() => setStarting(s)}
         onComplete={() => { setCompleting(s); setMoveTo(planned[0]?.id ?? '') }}
         onEdit={() => setEditing(s)}
@@ -745,7 +701,7 @@ function SprintSection({ sprint, items, selected, allOn, manage, hasActive, onTo
     <div ref={setNodeRef} className={clsx('rounded-lg bg-slate-50 p-2', isOver && 'ring-2 ring-brand-500 ring-inset')}>
       <div className="flex flex-wrap items-center gap-2 px-1 py-1">
         <input type="checkbox" checked={allOn} onChange={(e) => onToggleAll(e.target.checked)} disabled={items.length === 0} />
-        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 font-semibold">
+        <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 font-semibold">
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />} {sprint.name}
         </button>
         {manage && (
@@ -759,7 +715,7 @@ function SprintSection({ sprint, items, selected, allOn, manage, hasActive, onTo
         <div className="ml-auto flex items-center gap-2">
           {manage && sprint.state === 'active' && <button className="btn-default" onClick={onComplete}>Complete sprint</button>}
           {manage && sprint.state === 'planned' && (
-            <button className="btn-primary" disabled={hasActive} title={hasActive ? 'Complete the active sprint first' : ''} onClick={onStart}>Start sprint</button>
+            <button className="btn-primary" onClick={onStart}>Start sprint</button>
           )}
           <Dropdown
             align="right"

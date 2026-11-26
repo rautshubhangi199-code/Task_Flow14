@@ -486,9 +486,6 @@ export const useStore = create<AppState>()(
           const sp = s.sprints.find((x) => x.id === sprintId)
           if (!sp) throw new Error('Sprint not found.')
           if (sp.state !== 'planned') throw new Error('Only a planned sprint can be started.')
-          if (s.sprints.some((x) => x.projectId === sp.projectId && x.state === 'active')) {
-            throw new Error('Complete the active sprint before starting another.')
-          }
           if (!input.name.trim()) throw new Error('Sprint name is required.')
           if (!input.startDate || !input.endDate) throw new Error('Start and end dates are required.')
           if (input.startDate > input.endDate) throw new Error('End date must be on or after the start date.')

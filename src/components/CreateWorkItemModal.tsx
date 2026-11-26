@@ -145,7 +145,6 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
     () => items.filter((i) => i.projectId === projectId),
     [items, projectId],
   )
-  const activeSprint = useMemo(() => sprints.find((s) => s.projectId === projectId && s.state === 'active'), [sprints, projectId])
   const projectSprints = useMemo(
     () => sprints.filter((s) => s.projectId === projectId && s.state !== 'completed'),
     [sprints, projectId],
@@ -266,7 +265,7 @@ function CreateWorkItemForm({ defaults, onClose }: { defaults: Partial<WorkItemI
         dueDate: dueDate || null,
         startDate: startDate || defaults.startDate || null,
         team: team || null,
-        sprintId: sprintId || defaults.sprintId || activeSprint?.id || null,
+        sprintId: sprintId || defaults.sprintId || null,
         storyPoints: storyPoints.trim() && !Number.isNaN(Number(storyPoints)) ? Number(storyPoints) : null,
       }
       const item = await workItemService.create(input)

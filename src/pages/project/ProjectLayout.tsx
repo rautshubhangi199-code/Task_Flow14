@@ -1,12 +1,10 @@
 import { useRef, useState } from 'react'
 import { NavLink, Outlet, useParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { CalendarDays, ClipboardList, Columns3, GanttChart, GitBranch, LayoutDashboard, List, Pencil, Plus, Star, Target, Timer } from 'lucide-react'
+import { CalendarDays, ClipboardList, Columns3, GanttChart, GitBranch, LayoutDashboard, List, Pencil, Star, Target, Timer } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser, useProjectByKey } from '../../store/hooks'
-import { useUi } from '../../store/uiStore'
 import { projectService } from '../../services/api'
-import { canCreateWorkItems } from '../../lib/permissions'
 import { EmptyState, Modal, ProjectIcon } from '../../components/ui'
 
 function spaceAvatar(bg: string, art: string) {
@@ -62,7 +60,6 @@ export default function ProjectLayout() {
   const me = useCurrentUser()
   const isAdmin = me?.role === 'Admin'
   const starred = useStore((s) => s.starredProjects)
-  const openCreate = useUi((s) => s.openCreateItem)
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -109,7 +106,6 @@ export default function ProjectLayout() {
             <Star size={18} className={isStarred ? 'fill-amber-400 text-amber-400' : 'text-slate-400 hover:text-slate-600'} />
           </button>
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{project.type}</span>
-          {canCreateWorkItems(me) && <button className="btn-default ml-auto" onClick={() => openCreate({ projectId: project.id })}><Plus size={16} /> Create in {project.key}</button>}
         </div>
         <nav className="mt-3 flex gap-0 overflow-x-auto whitespace-nowrap">
           {TABS.map(([path, label, Icon]) => (

@@ -355,6 +355,12 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
     { id: 'xlsx', label: 'Export Excel', run: () => downloadFile(`${item.id}.csv`, exportBody(), 'text/csv') },
     { id: 'doc', label: 'Export Word', run: () => downloadFile(`${item.id}.doc`, exportBody(), 'application/msword') },
     { id: 'xml', label: 'Export XML', run: () => downloadFile(`${item.id}.xml`, `<item id="${item.id}"><summary>${item.summary}</summary><status>${item.status}</status><description>${item.description}</description></item>`, 'application/xml') },
+    { id: 'delete', label: 'Delete', run: () => {
+      if (!confirm(`Delete ${item.id}?`)) return
+      workItemService.remove(item.id)
+      onClose()
+      showToast(`Deleted ${item.id}`)
+    } },
   ]
   const paletteItems = commands.filter((c) => c.label.toLowerCase().includes(paletteQ.toLowerCase()))
 
@@ -592,6 +598,21 @@ export function WorkItemDrawer({ itemId, onClose }: WorkItemDrawerProps) {
                       <MoreRow label="Export Excel" onClick={() => runAndClose(() => downloadFile(`${item.id}.csv`, exportBody(), 'text/csv'), close)} />
                       <MoreRow label="Export Word" onClick={() => runAndClose(() => downloadFile(`${item.id}.doc`, exportBody(), 'application/msword'), close)} />
                       <MoreRow label="Export XML" onClick={() => runAndClose(() => downloadFile(`${item.id}.xml`, `<item id="${item.id}"><summary>${item.summary}</summary><status>${item.status}</status></item>`, 'application/xml'), close)} />
+                      <div className="my-1 border-t border-slate-200" />
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                        onClick={() => {
+                          close()
+                          setMorePanel(null)
+                          if (!confirm(`Delete ${item.id}?`)) return
+                          workItemService.remove(item.id)
+                          onClose()
+                          showToast(`Deleted ${item.id}`)
+                        }}
+                      >
+                        Delete
+                      </button>
                     </>
                   )}
                 </div>
