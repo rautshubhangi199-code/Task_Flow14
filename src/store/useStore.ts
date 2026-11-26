@@ -58,6 +58,7 @@ export interface AppState extends SeedData {
   resetDemo: () => void
 
   createProject: (input: ProjectInput) => Project
+  updateProject: (id: string, patch: Partial<ProjectInput>) => void
   toggleStarProject: (projectId: string) => void
 
   createItem: (input: WorkItemInput) => WorkItem
@@ -198,6 +199,10 @@ export const useStore = create<AppState>()(
           set((s) => ({ projects: [...s.projects, project] }))
           return project
         },
+        updateProject: (id, patch) =>
+          set((s) => ({
+            projects: s.projects.map((p) => (p.id === id ? { ...p, ...patch, key: patch.key ? patch.key.toUpperCase() : p.key } : p)),
+          })),
         toggleStarProject: (projectId) =>
           set((s) => {
             const me = actor()

@@ -161,6 +161,7 @@ export const projectService = {
   toggleStar: (projectId: string) => ok(st().toggleStarProject(projectId)),
   get: (id: string) => ok(st().projects.find((p) => p.id === id)),
   update: (id: string, patch: Partial<ProjectInput>) => {
+    st().updateProject(id, patch)
     fire(() => http.patch(API_ENDPOINTS.UPDATE_project, { id: num(id) ?? id, ...patch }))
     return ok(st().projects.find((p) => p.id === id))
   },

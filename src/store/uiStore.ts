@@ -39,8 +39,8 @@ export const useUi = create<UiState>()((set, get) => ({
   showToast: (message, link) => {
     const id = ++toastId
     set({ toasts: [...get().toasts, { id, message, link }] })
-    if (link?.startsWith('/browse/')) return
-    setTimeout(() => get().dismissToast(id), 4500)
+    const ms = link?.startsWith('/browse/') ? 2000 : 4500
+    setTimeout(() => get().dismissToast(id), ms)
   },
   dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
 }))

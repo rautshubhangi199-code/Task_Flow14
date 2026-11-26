@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
-import { Check, ChevronDown, Clock, Info, Mail, MoreHorizontal, RefreshCw, Search, Shield } from 'lucide-react'
+import { Check, ChevronDown, Clock, Info, Mail, Menu, MoreHorizontal, RefreshCw, Search, Shield } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { userAdminService } from '../../services/api'
 import { API_ENDPOINTS } from '../../Network/apiEndpoints'
-import { http } from '../../services/http'
+import { getAccessToken, http } from '../../services/http'
 import { ACCOUNT_TYPES, ADMIN_ACCESS_OPTIONS, EMAIL_RE } from '../../lib/adminUsers'
 import { canGrantOrgAdmin } from '../../lib/permissions'
 import type { AccountStatus, AccountType, AdminAccess, OrgApp, Role, User } from '../../types'
@@ -76,6 +76,12 @@ export default function UsersPage() {
   const showToast = useUi((s) => s.showToast)
 
   const [users, setUsers] = useState<User[]>(localUsers)
+  const [counts, setCounts] = useState({
+    total_users: 0,
+    active_users: 0,
+    managed_accounts: 0,
+    organization_admins: 0,
+  })
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
   const [accountType, setAccountType] = useState<AccountType | ''>('')
@@ -86,12 +92,43 @@ export default function UsersPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [navOpen, setNavOpen] = useState(false)
   const [profileExtras, setProfileExtras] = useState<Record<string, { jobTitle: string; department: string; location: string }>>({})
 
   const loadUsers = async () => {
     setError(null)
     try {
-      const rows = await userAdminService.list()
+      const organization_id = Number(useStore.getState().organization.id) || 1
+      const loadCounts = async () => {
+        try {
+          return await http.get<Record<string, unknown>>(API_ENDPOINTS.GET_user_count, { organization_id })
+        } catch {
+          const token = getAccessToken()
+          const res = await fetch(`http://localhost:8000/api/${API_ENDPOINTS.GET_user_count}?organization_id=${organization_id}`, {
+            headers: {
+              Accept: '*/*',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          })
+          return await res.json() as Record<string, unknown>
+        }
+      }
+      const [rows, countPayload] = await Promise.all([
+        userAdminService.list(),
+        loadCounts().catch(() => ({})),
+      ])
+      const rec = (countPayload && typeof countPayload === 'object' && !Array.isArray(countPayload)
+        ? countPayload
+        : {}) as Record<string, unknown>
+      const nested = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data)
+        ? rec.data as Record<string, unknown>
+        : rec
+      setCounts({
+        total_users: Number(nested.total_users ?? 0) || 0,
+        active_users: Number(nested.active_users ?? 0) || 0,
+        managed_accounts: Number(nested.managed_accounts ?? 0) || 0,
+        organization_admins: Number(nested.organization_admins ?? 0) || 0,
+      })
       const local = useStore.getState().users
       setUsers(rows.length ? rows : local)
     } catch {
@@ -108,14 +145,7 @@ export default function UsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.id])
 
-  const directoryUsers = useMemo(() => users.filter((u) => isAdminAccount(u)), [users])
-
-  const totals = useMemo(() => ({
-    total: directoryUsers.length,
-    active: directoryUsers.filter((u) => u.accountStatus === 'active').length,
-    managed: directoryUsers.filter((u) => u.managed).length,
-    admins: directoryUsers.filter((u) => u.orgAdmin || u.adminAccess === 'org-admin' || u.role === 'Admin').length,
-  }), [directoryUsers])
+  const directoryUsers = users
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase()
@@ -151,8 +181,11 @@ export default function UsersPage() {
   const selectedUser = directoryUsers.find((u) => u.id === selectedId) ?? null
 
   return (
-    <div className="flex min-h-full bg-white">
-      <aside className="w-[220px] shrink-0 border-r border-[#DCDFE4] bg-[#F7F8F9] px-3 py-4">
+    <div className="flex min-h-full min-w-0 bg-white">
+      {navOpen && (
+        <button type="button" className="fixed inset-0 z-30 bg-[#091E42]/40 lg:hidden" aria-label="Close administration menu" onClick={() => setNavOpen(false)} />
+      )}
+      <aside className={`z-40 w-[min(220px,85vw)] shrink-0 overflow-y-auto border-r border-[#DCDFE4] bg-[#F7F8F9] px-3 py-4 lg:static lg:flex lg:w-[220px] ${navOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>
         <div className="mb-3 flex items-center gap-2 px-2 text-[13px] font-semibold text-[#172B4D]">
           <span className="flex h-6 w-6 items-center justify-center rounded bg-[#44546F] text-[11px] text-white">A</span>
           Administration
@@ -173,7 +206,7 @@ export default function UsersPage() {
               type="button"
               key={item.label}
               className={`w-full rounded px-2 py-1.5 text-left text-[13px] ${item.active ? 'bg-white font-medium text-[#0C66E4] shadow-sm' : 'text-[#44546F]'}`}
-              onClick={() => { if (item.label === 'Users') setSelectedId(null) }}
+              onClick={() => { if (item.label === 'Users') setSelectedId(null); setNavOpen(false) }}
             >
               {item.label}
             </button>
@@ -181,7 +214,14 @@ export default function UsersPage() {
         })}
       </aside>
 
-      <div className="min-w-0 flex-1 px-8 py-6">
+      <div className="min-w-0 flex-1 overflow-x-hidden px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <button
+          type="button"
+          className="mb-3 inline-flex items-center gap-2 rounded border border-[#DCDFE4] bg-white px-2.5 py-1.5 text-[13px] text-[#172B4D] lg:hidden"
+          onClick={() => setNavOpen(true)}
+        >
+          <Menu size={16} /> Administration
+        </button>
         {selectedUser ? (
           <UserDetail
             user={selectedUser}
@@ -229,7 +269,7 @@ export default function UsersPage() {
               <span className="text-[#0C66E4]">About managed accounts and external users</span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link to="/settings/users/invite" className="rounded bg-[#0C66E4] px-3 py-1.5 text-[14px] font-medium text-white hover:bg-[#0055CC]">
               Invite users
             </Link>
@@ -244,25 +284,25 @@ export default function UsersPage() {
 
         {error && <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
-        <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
           {[
-            ['Total users', totals.total, true],
-            ['Active users', totals.active, false],
-            ['Managed accounts', totals.managed, true],
-            ['Organization admins', totals.admins, false],
+            ['Total users', counts.total_users, true],
+            ['Active users', counts.active_users, false],
+            ['Managed accounts', counts.managed_accounts, true],
+            ['Organization admins', counts.organization_admins, false],
           ].map(([label, value, info]) => (
-            <div key={String(label)} className="rounded-lg border border-[#DCDFE4] bg-white px-4 py-3">
-              <div className="flex items-center gap-1 text-[12px] font-medium text-[#44546F]">
-                {label}
-                {info ? <Info size={12} className="text-[#626F86]" /> : null}
+            <div key={String(label)} className="min-w-0 rounded-lg border border-[#DCDFE4] bg-white px-3 py-3 sm:px-4">
+              <div className="flex items-start gap-1 text-[12px] font-medium leading-tight text-[#44546F]">
+                <span className="min-w-0">{label}</span>
+                {info ? <Info size={12} className="mt-0.5 shrink-0 text-[#626F86]" /> : null}
               </div>
-              <div className="mt-2 text-[28px] font-semibold leading-none text-[#172B4D]">{loading ? '—' : value}</div>
+              <div className="mt-2 text-[24px] font-semibold leading-none text-[#172B4D] sm:text-[28px]">{loading ? '—' : value}</div>
             </div>
           ))}
         </div>
 
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[220px] flex-1">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative w-full min-w-0 sm:min-w-[180px] sm:flex-1">
             <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               value={q}
@@ -271,14 +311,14 @@ export default function UsersPage() {
               className="input pl-8"
             />
           </div>
-          <select className="input w-auto" value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType | '')}>
+          <select className="input w-full sm:w-auto" value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType | '')}>
             {ACCOUNT_TYPES.map((o) => <option key={o.label} value={o.value}>{o.value ? o.label : 'Account type'}</option>)}
           </select>
-          <select className="input w-auto" value={role} onChange={(e) => setRole(e.target.value as Role | '')}>
+          <select className="input w-full sm:w-auto" value={role} onChange={(e) => setRole(e.target.value as Role | '')}>
             <option value="">Role</option>
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select className="input w-auto" value={appId} onChange={(e) => setAppId(e.target.value)}>
+          <select className="input w-full sm:w-auto" value={appId} onChange={(e) => setAppId(e.target.value)}>
             <option value="">Apps</option>
             {orgApps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
@@ -316,7 +356,7 @@ export default function UsersPage() {
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-[#DCDFE4]">
-          <table className="w-full min-w-[720px]">
+          <table className="w-full min-w-[640px]">
             <thead className="border-b border-[#DCDFE4] bg-white">
               <tr>
                 <th className="th text-left">User</th>
@@ -381,7 +421,7 @@ function UserRow({
           <Avatar user={user} size={32} />
           <div>
             <div className="font-medium text-[#0C66E4] hover:underline">{user.name}</div>
-            <div className="text-xs text-[#44546F]">{user.email}</div>
+            <div className="break-all text-xs text-[#44546F]">{user.email}</div>
             {(apps || groupNames) ? (
               <div className="text-xs text-slate-400">{user.role}{apps ? ` · ${apps}` : ''}{groupNames ? ` · ${groupNames}` : ''}</div>
             ) : null}
@@ -571,8 +611,8 @@ function UserDetail({
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="rounded-lg border border-[#DCDFE4] bg-white px-6 py-8 text-center">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+        <div className="rounded-lg border border-[#DCDFE4] bg-white px-4 py-6 text-center sm:px-6 sm:py-8">
           <div className="flex justify-center">
             <span
               className="inline-flex h-[120px] w-[120px] items-center justify-center rounded-full text-[36px] font-semibold text-white"
@@ -609,7 +649,7 @@ function UserDetail({
             Last seen {lastSeenLong(user.lastSeenAt)} <Info size={12} className="mb-0.5 inline text-[#626F86]" />
           </div>
 
-          <div className="mb-4 flex flex-wrap gap-4 border-b border-[#DCDFE4] text-[14px]">
+          <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 overflow-x-auto border-b border-[#DCDFE4] text-[14px]">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -766,7 +806,7 @@ function EditDetailsDialog({
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#091E42]/40 p-4" onMouseDown={onClose}>
       <div
-        className="w-full max-w-[560px] rounded-lg bg-white p-6 shadow-2xl"
+        className="max-h-[90vh] w-full max-w-[560px] overflow-y-auto rounded-lg bg-white p-4 shadow-2xl sm:p-6"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <h2 className="text-[20px] font-semibold text-[#172B4D]">Edit details</h2>

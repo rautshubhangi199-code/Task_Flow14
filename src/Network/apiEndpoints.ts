@@ -16,6 +16,7 @@ export const API_ENDPOINTS = {
   POST_login: 'login/',
   GET_user_summary: 'get-user-summary/',
   GET_all_users: 'get-all-users/',
+  GET_user_count: 'get-user-count/',
   GET_user_by_id: 'get-user-by-id/',
   POST_invite_users: 'invite-users/',
   UPDATE_user: 'update-user/',

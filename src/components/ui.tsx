@@ -169,9 +169,10 @@ export function ProgressBar({ value, color = 'bg-green-600' }: { value: number; 
 }
 
 export function ProjectIcon({ icon, size = 24 }: { icon: string; size?: number }) {
+  const isImage = icon.startsWith('data:') || icon.startsWith('http://') || icon.startsWith('https://')
   return (
-    <span className="inline-flex shrink-0 items-center justify-center rounded bg-brand-50" style={{ width: size, height: size, fontSize: size * 0.6 }}>
-      {icon}
+    <span className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded bg-brand-50" style={{ width: size, height: size, fontSize: size * 0.6 }}>
+      {isImage ? <img src={icon} alt="" className="h-full w-full object-cover" /> : icon}
     </span>
   )
 }

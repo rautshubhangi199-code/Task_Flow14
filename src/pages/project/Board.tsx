@@ -3,14 +3,15 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { Plus, Search, Settings, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, MoreHorizontal, Pencil, Plus, Search, Settings, Trash2, X } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { useCurrentUser } from '../../store/hooks'
 import { useUi } from '../../store/uiStore'
 import { useProject } from './projectContext'
-import { commentService, workItemService } from '../../services/api'
+import { commentService, workItemService, workMetaService } from '../../services/api'
+import { ensureCatalog, statusIdForName } from '../../services/catalog'
 import { ISSUE_TYPES, PRIORITIES, STATUSES, TEAMS, type Status, type User, type WorkItem } from '../../types'
-import { Avatar, PriorityIcon, StatusBadge, TypeIcon } from '../../components/ui'
+import { Avatar, Dropdown, MenuItem, PriorityIcon, StatusBadge, TypeIcon } from '../../components/ui'
 import { StatusDropdown } from '../../components/StatusDropdown'
 import { timeAgo } from '../../lib/utils'
 import { BacklogFilterBar, useBacklogFilter } from './BacklogFilter'
@@ -27,8 +28,16 @@ export default function Board() {
   const [groupBy, setGroupBy] = useState<'none' | 'assignee'>('none')
   const [sprintId, setSprintId] = useState(activeSprint?.id ?? 'all')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => [...STATUSES])
+  const [editingCol, setEditingCol] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const filter = useBacklogFilter()
+  const me = useCurrentUser()
+  const isAdmin = me?.role === 'Admin'
+
+  useEffect(() => {
+    void ensureCatalog()
+  }, [])
 
   const members = users
   const projectItems = useMemo(() => allItems.filter((i) => i.projectId === project.id), [allItems, project.id])
@@ -67,6 +76,39 @@ export default function Board() {
   const openItem = (id: string) => setOpenId(id)
 
   const sprintForCreate = sprintId === 'all' ? activeSprint?.id : sprintId
+
+  const renameColumn = (from: string, to: string) => {
+    const name = to.trim()
+    setEditingCol(null)
+    if (!name || name === from || columnOrder.includes(name)) return
+    const id = statusIdForName(from, project.id) ?? statusIdForName(from)
+    if (id) workMetaService.updateStatus(id, { name })
+    projectItems.filter((i) => i.status === from).forEach((i) => workItemService.update(i.id, { status: name as Status }))
+    setColumnOrder((cols) => cols.map((c) => (c === from ? name : c)))
+  }
+
+  const moveColumn = (status: string, dir: -1 | 1) => {
+    setColumnOrder((cols) => {
+      const i = cols.indexOf(status)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= cols.length) return cols
+      const next = [...cols]
+      const tmp = next[i]
+      next[i] = next[j]
+      next[j] = tmp
+      return next
+    })
+  }
+
+  const deleteColumn = (status: string) => {
+    if (!confirm(`Delete status "${status}"? Work items will move to an adjacent column.`)) return
+    const id = statusIdForName(status, project.id) ?? statusIdForName(status)
+    if (id) workMetaService.removeStatus(id)
+    const i = columnOrder.indexOf(status)
+    const fallback = (columnOrder[i - 1] ?? columnOrder[i + 1] ?? 'To Do') as Status
+    projectItems.filter((item) => item.status === status).forEach((item) => workItemService.update(item.id, { status: fallback }))
+    setColumnOrder((cols) => cols.filter((c) => c !== status))
+  }
 
   return (
     <div className="flex h-full flex-col p-4">
@@ -114,18 +156,29 @@ export default function Board() {
                 </div>
               )}
               <div className="flex w-max items-start gap-3">
-                {STATUSES.map((s) => {
+                {columnOrder.map((s, colIdx) => {
                   const colItems = items.filter((i) => i.status === s && (lane.id === 'all' || (i.assigneeId ?? 'none') === lane.id))
                   return (
                     <Column
                       key={s}
                       id={`${lane.id}::${s}`}
-                      status={s}
+                      status={s as Status}
                       count={colItems.length}
                       items={colItems}
                       allItems={projectItems}
+                      columnOrder={columnOrder}
+                      editing={editingCol === s}
+                      canMoveLeft={colIdx > 0}
+                      canMoveRight={colIdx < columnOrder.length - 1}
                       onOpen={openItem}
-                      onCreate={() => openCreate({ projectId: project.id, status: s, sprintId: sprintForCreate ?? null, type: 'Task' })}
+                      onCreate={() => openCreate({ projectId: project.id, status: s as Status, sprintId: sprintForCreate ?? null, type: 'Task' })}
+                      onStartEdit={() => setEditingCol(s)}
+                      onSaveEdit={(name) => renameColumn(s, name)}
+                      onCancelEdit={() => setEditingCol(null)}
+                      onMoveLeft={() => moveColumn(s, -1)}
+                      onMoveRight={() => moveColumn(s, 1)}
+                      onDelete={() => deleteColumn(s)}
+                      isAdmin={isAdmin}
                     />
                   )
                 })}
@@ -140,44 +193,171 @@ export default function Board() {
   )
 }
 
-function Column({ id, status, count, items, allItems, onOpen, onCreate }: {
+function Column({
+  id, status, count, items, allItems, columnOrder, editing, canMoveLeft, canMoveRight,
+  onOpen, onCreate, onStartEdit, onSaveEdit, onCancelEdit, onMoveLeft, onMoveRight, onDelete, isAdmin,
+}: {
   id: string
   status: Status
   count: number
   items: WorkItem[]
   allItems: WorkItem[]
+  columnOrder: string[]
+  editing: boolean
+  canMoveLeft: boolean
+  canMoveRight: boolean
   onOpen: (id: string) => void
   onCreate: () => void
+  onStartEdit: () => void
+  onSaveEdit: (name: string) => void
+  onCancelEdit: () => void
+  onMoveLeft: () => void
+  onMoveRight: () => void
+  onDelete: () => void
+  isAdmin: boolean
 }) {
   const { setNodeRef, isOver } = useDroppable({ id })
+  const [draft, setDraft] = useState(status)
+  useEffect(() => { setDraft(status) }, [status])
   return (
     <div className="w-[260px] shrink-0">
       <div className="mb-2 flex items-center gap-2 px-1">
-        <span className="text-sm font-medium text-slate-700">{status}</span>
+        {editing && isAdmin ? (
+          <input
+            autoFocus
+            className="h-7 min-w-0 flex-1 rounded border-2 border-[#4c9aff] px-1.5 text-sm font-medium text-slate-800 outline-none"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onSaveEdit(draft)
+              if (e.key === 'Escape') onCancelEdit()
+            }}
+            onBlur={() => onSaveEdit(draft)}
+          />
+        ) : (
+          <span className="text-sm font-medium text-slate-700">{status}</span>
+        )}
         <span className="text-xs text-slate-500">{count}</span>
-        <button className="ml-auto rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700" title={`Create in ${status}`} onClick={onCreate}><Plus size={16} /></button>
+        {isAdmin && (
+        <div className="ml-auto">
+          <Dropdown
+            align="right"
+            trigger={(open) => (
+              <button
+                type="button"
+                className={clsx('rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700', open && 'bg-slate-200 text-slate-700')}
+                title="More"
+                aria-label="Column actions"
+              >
+                <MoreHorizontal size={16} />
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
+                <MenuItem onClick={() => { onStartEdit(); close() }}>
+                  <Pencil size={14} className="text-slate-500" />
+                  Edit
+                </MenuItem>
+                <MenuItem onClick={() => { if (canMoveLeft) onMoveLeft(); close() }}>
+                  <ArrowLeft size={14} className="text-slate-500" />
+                  <span className={clsx(!canMoveLeft && 'text-slate-400')}>Move left</span>
+                </MenuItem>
+                <MenuItem onClick={() => { if (canMoveRight) onMoveRight(); close() }}>
+                  <ArrowRight size={14} className="text-slate-500" />
+                  <span className={clsx(!canMoveRight && 'text-slate-400')}>Move right</span>
+                </MenuItem>
+                <MenuItem danger onClick={() => { onDelete(); close() }}>
+                  <Trash2 size={14} />
+                  Delete
+                </MenuItem>
+              </>
+            )}
+          </Dropdown>
+        </div>
+        )}
       </div>
       <div ref={setNodeRef} className={clsx('flex min-h-[120px] flex-col gap-2 rounded-lg p-1', isOver ? 'bg-brand-50 ring-2 ring-brand-200' : 'bg-slate-100')}>
-        {items.map((i) => <Card key={i.id} item={i} allItems={allItems} onOpen={onOpen} />)}
+        {items.map((i) => <Card key={i.id} item={i} allItems={allItems} columnOrder={columnOrder} onOpen={onOpen} isAdmin={isAdmin} />)}
         <button className="flex h-8 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-slate-700" onClick={onCreate}><Plus size={16} /></button>
       </div>
     </div>
   )
 }
 
-function Card({ item, allItems, onOpen }: { item: WorkItem; allItems: WorkItem[]; onOpen: (id: string) => void }) {
+function Card({ item, allItems, columnOrder, onOpen, isAdmin }: { item: WorkItem; allItems: WorkItem[]; columnOrder: string[]; onOpen: (id: string) => void; isAdmin: boolean }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id })
   const users = useStore((s) => s.users)
   const assignee = users.find((u) => u.id === item.assigneeId)
   const parent = allItems.find((i) => i.id === item.parentId)
+  const idx = columnOrder.indexOf(item.status)
+  const leftStatus = idx > 0 ? (columnOrder[idx - 1] as Status) : null
+  const rightStatus = idx >= 0 && idx < columnOrder.length - 1 ? (columnOrder[idx + 1] as Status) : null
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} className={clsx(isDragging && 'opacity-40')}>
+    <div ref={setNodeRef} {...listeners} {...attributes} className={clsx('group relative', isDragging && 'opacity-40')}>
       <div
         data-issue-key={item.id}
         onClick={() => onOpen(item.id)}
       >
         <CardView item={item} parent={parent} assignee={assignee} />
       </div>
+      {isAdmin && (
+      <div
+        className="absolute right-1.5 top-1.5 z-10 opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Dropdown
+          align="right"
+          trigger={(open) => (
+            <button
+              type="button"
+              className={clsx('rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800', open && 'bg-slate-200 text-slate-800')}
+              title="More"
+              aria-label="More actions"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+          )}
+        >
+          {(close) => (
+            <>
+              <MenuItem
+                onClick={() => {
+                  if (!leftStatus) return
+                  workItemService.update(item.id, { status: leftStatus })
+                  close()
+                }}
+              >
+                <ArrowLeft size={14} className="text-slate-500" />
+                <span className={clsx(!leftStatus && 'text-slate-400')}>Move left</span>
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  if (!rightStatus) return
+                  workItemService.update(item.id, { status: rightStatus })
+                  close()
+                }}
+              >
+                <ArrowRight size={14} className="text-slate-500" />
+                <span className={clsx(!rightStatus && 'text-slate-400')}>Move right</span>
+              </MenuItem>
+              <MenuItem
+                danger
+                onClick={() => {
+                  if (!confirm(`Delete ${item.id}?`)) return
+                  workItemService.remove(item.id)
+                  close()
+                }}
+              >
+                <Trash2 size={14} />
+                Delete
+              </MenuItem>
+            </>
+          )}
+        </Dropdown>
+      </div>
+      )}
     </div>
   )
 }
