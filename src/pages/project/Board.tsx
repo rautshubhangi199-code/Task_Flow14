@@ -147,15 +147,15 @@ export default function Board() {
         autoScroll={false}
         onDragEnd={onDragEnd}
       >
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
           {lanes.map((lane) => (
-            <div key={lane.id} className={groupBy === 'assignee' ? 'mb-4' : ''}>
+            <div key={lane.id} className={clsx('flex h-full min-h-0 flex-col', groupBy === 'assignee' && 'mb-4 h-[min(100%,28rem)]')}>
               {groupBy === 'assignee' && (
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <div className="mb-2 flex shrink-0 items-center gap-2 text-sm font-medium">
                   <Avatar user={lane.user} size={20} /> {lane.name}
                 </div>
               )}
-              <div className="flex w-max items-start gap-3">
+              <div className="flex min-h-0 flex-1 items-stretch gap-3">
                 {columnOrder.map((s, colIdx) => {
                   const colItems = items.filter((i) => i.status === s && (lane.id === 'all' || (i.assigneeId ?? 'none') === lane.id))
                   return (
@@ -220,8 +220,8 @@ function Column({
   const [draft, setDraft] = useState(status)
   useEffect(() => { setDraft(status) }, [status])
   return (
-    <div className="w-[260px] shrink-0">
-      <div className="mb-2 flex items-center gap-2 px-1">
+    <div className="flex h-full w-[260px] shrink-0 flex-col">
+      <div className="mb-2 flex shrink-0 items-center gap-2 px-1">
         {editing && isAdmin ? (
           <input
             autoFocus
@@ -277,7 +277,7 @@ function Column({
         </div>
         )}
       </div>
-      <div ref={setNodeRef} className={clsx('flex min-h-[120px] flex-col gap-2 rounded-lg p-1', isOver ? 'bg-brand-50 ring-2 ring-brand-200' : 'bg-slate-100')}>
+      <div ref={setNodeRef} className={clsx('flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-lg p-1', isOver ? 'bg-brand-50 ring-2 ring-brand-200' : 'bg-slate-100')}>
         {items.map((i) => <Card key={i.id} item={i} allItems={allItems} columnOrder={columnOrder} onOpen={onOpen} isAdmin={isAdmin} />)}
         <button className="flex h-8 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-slate-700" onClick={onCreate}><Plus size={16} /></button>
       </div>
@@ -290,6 +290,7 @@ function Card({ item, allItems, columnOrder, onOpen, isAdmin }: { item: WorkItem
   const users = useStore((s) => s.users)
   const assignee = users.find((u) => u.id === item.assigneeId)
   const parent = allItems.find((i) => i.id === item.parentId)
+  const epics = allItems.filter((i) => i.projectId === item.projectId && i.type === 'Epic')
   const idx = columnOrder.indexOf(item.status)
   const leftStatus = idx > 0 ? (columnOrder[idx - 1] as Status) : null
   const rightStatus = idx >= 0 && idx < columnOrder.length - 1 ? (columnOrder[idx + 1] as Status) : null
@@ -299,7 +300,7 @@ function Card({ item, allItems, columnOrder, onOpen, isAdmin }: { item: WorkItem
         data-issue-key={item.id}
         onClick={() => onOpen(item.id)}
       >
-        <CardView item={item} parent={parent} assignee={assignee} />
+        <CardView item={item} parent={parent} epics={epics} assignee={assignee} />
       </div>
       {isAdmin && (
       <div
@@ -362,7 +363,7 @@ function Card({ item, allItems, columnOrder, onOpen, isAdmin }: { item: WorkItem
   )
 }
 
-function CardView({ item, parent, assignee }: { item: WorkItem; parent?: WorkItem; assignee?: User }) {
+function CardView({ item, parent, epics, assignee }: { item: WorkItem; parent?: WorkItem; epics: WorkItem[]; assignee?: User }) {
   return (
     <div className="cursor-pointer rounded-md border border-slate-200 bg-white p-3 shadow-sm hover:bg-slate-50">
       <div className="text-sm font-medium text-slate-800">{item.summary}</div>
@@ -372,9 +373,41 @@ function CardView({ item, parent, assignee }: { item: WorkItem; parent?: WorkIte
         </div>
       )}
       {parent && (
-        <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-          <TypeIcon type={parent.type} size={12} />
-          <span className="truncate">{parent.id} {parent.summary}</span>
+        <div
+          className="mt-2"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Dropdown
+            trigger={(open) => (
+              <button
+                type="button"
+                className={clsx('inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-200', open && 'bg-slate-200')}
+              >
+                <TypeIcon type={parent.type} size={12} />
+                <span className="truncate">{parent.id} {parent.summary}</span>
+              </button>
+            )}
+          >
+            {(close) => (
+              <div className="max-h-56 overflow-auto">
+                {epics.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No epics</div>}
+                {epics.map((e) => (
+                  <MenuItem
+                    key={e.id}
+                    active={e.id === item.parentId}
+                    onClick={() => {
+                      workItemService.update(item.id, { parentId: e.id })
+                      close()
+                    }}
+                  >
+                    <TypeIcon type="Epic" size={14} />
+                    <span className="truncate">{e.id} {e.summary}</span>
+                  </MenuItem>
+                ))}
+              </div>
+            )}
+          </Dropdown>
         </div>
       )}
       <div className="mt-3 flex items-center gap-1.5">
@@ -414,7 +447,7 @@ function IssuePopup({ id, onClose }: { id: string; onClose: () => void }) {
   if (!item) return null
 
   const parent = items.find((i) => i.id === item.parentId)
-  const parentChoices = items.filter((i) => i.projectId === item.projectId && (i.type === 'Epic' || i.type === 'Story') && i.id !== item.id)
+  const parentChoices = items.filter((i) => i.projectId === item.projectId && i.type === 'Epic' && i.id !== item.id)
   const projectSprints = sprints.filter((s) => s.projectId === item.projectId && (s.state !== 'completed' || s.id === item.sprintId))
   const update = (patch: Partial<WorkItem>) => workItemService.update(item.id, patch)
 
@@ -511,7 +544,7 @@ function IssuePopup({ id, onClose }: { id: string; onClose: () => void }) {
                 {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </Field>
-            <Field label="Parent">
+            <Field label="Epic">
               <select className="input py-1" value={item.parentId ?? ''} onChange={(e) => update({ parentId: e.target.value || null })}>
                 <option value="">None</option>
                 {parentChoices.map((p) => <option key={p.id} value={p.id}>{p.id} · {p.summary}</option>)}

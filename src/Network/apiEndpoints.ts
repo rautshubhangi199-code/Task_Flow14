@@ -1,6 +1,6 @@
 export const API_ENDPOINTS = {
   // development
-  BASE_URL: 'http://192.168.1.9:8000/api/',
+  BASE_URL: 'http://192.168.1.18:8000/api/',
 
   // Use Vite proxy instead of the IP if the browser blocks CORS:
   // BASE_URL: '/api/',

@@ -115,7 +115,7 @@ export function BacklogFilterBar({
   const [extraFields, setExtraFields] = useState<string[]>([])
   const [addFieldOpen, setAddFieldOpen] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
-  const parentOptions = useMemo(() => projectItems.filter((i) => i.type === 'Epic' || i.type === 'Story'), [projectItems])
+  const parentOptions = useMemo(() => projectItems.filter((i) => i.type === 'Epic'), [projectItems])
   const labelOptions = useMemo(() => [...new Set(projectItems.flatMap((i) => i.labels))].sort(), [projectItems])
 
   useEffect(() => {
@@ -162,7 +162,7 @@ export function BacklogFilterBar({
             <div className="flex min-h-[280px]">
               <div className="w-44 shrink-0 border-r border-slate-200 py-2">
                 {([
-                  ['parent', 'Parent'],
+                  ['parent', 'Epic'],
                   ['assignee', 'Assignee'],
                   ['status', 'Status'],
                   ['type', 'Work type'],

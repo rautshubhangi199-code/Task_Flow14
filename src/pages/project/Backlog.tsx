@@ -47,22 +47,20 @@ function RowView({ item, overlay, selected, issueOpen, onSelect, onOpen }: { ite
         <input type="checkbox" checked={!!selected} onChange={(e) => onSelect(item.id, e.target.checked)} onPointerDown={(e) => e.stopPropagation()} />
       )}
       <TypeIcon type={item.type} />
-      <button
-        type="button"
-        className="shrink-0 whitespace-nowrap text-xs font-semibold text-slate-500 hover:text-blue-600 hover:underline"
-        onPointerDown={(e) => e.stopPropagation()}
+      <span
+        role="link"
+        className="shrink-0 cursor-pointer whitespace-nowrap text-xs font-semibold text-slate-500 hover:text-blue-600 hover:underline"
         onClick={(e) => { e.stopPropagation(); onOpen?.(item.id) }}
       >
         {item.id}
-      </button>
-      <button
-        type="button"
-        className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-slate-600 hover:text-blue-600 hover:underline"
-        onPointerDown={(e) => e.stopPropagation()}
+      </span>
+      <span
+        role="link"
+        className="min-w-0 flex-1 cursor-pointer truncate text-left text-xs font-semibold text-slate-600 hover:text-blue-600 hover:underline"
         onClick={(e) => { e.stopPropagation(); onOpen?.(item.id) }}
       >
         {item.summary}
-      </button>
+      </span>
 
       {/* Parent / Epic pill if present */}
       {parent && (
@@ -135,9 +133,15 @@ function RowView({ item, overlay, selected, issueOpen, onSelect, onOpen }: { ite
 }
 
 function Row({ item, selected, issueOpen, onSelect, onOpen }: { item: WorkItem; selected: boolean; issueOpen?: boolean; onSelect: (id: string, on: boolean) => void; onOpen?: (id: string) => void }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id })
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: item.id })
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `row:${item.id}` })
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} className={clsx(isDragging && 'opacity-40')}>
+    <div
+      ref={(node) => { setDragRef(node); setDropRef(node) }}
+      {...listeners}
+      {...attributes}
+      className={clsx('cursor-grab active:cursor-grabbing', isDragging && 'opacity-40', isOver && 'ring-1 ring-inset ring-brand-400')}
+    >
       <RowView item={item} selected={selected} issueOpen={issueOpen} onSelect={onSelect} onOpen={onOpen} />
     </div>
   )
@@ -337,10 +341,15 @@ export default function Backlog() {
   const planned = sprints.filter((s) => s.state === 'planned')
   const completed = sprints.filter((s) => s.state === 'completed')
   const backlogItems = items.filter((i) => !i.sprintId || !sprints.some((s) => s.id === i.sprintId))
-  const droppableIds = useMemo(
+  const containerIds = useMemo(
     () => new Set(['backlog', ...sprints.filter((s) => s.state !== 'completed').map((s) => s.id)]),
     [sprints],
   )
+  const droppableIds = useMemo(() => {
+    const ids = new Set(containerIds)
+    for (const i of items) ids.add(`row:${i.id}`)
+    return ids
+  }, [containerIds, items])
 
   const collisionDetection: CollisionDetection = (args) => {
     const pointerHits = pointerWithin(args)
@@ -352,10 +361,14 @@ export default function Backlog() {
 
   const sprintForOver = (overId: string): string | null => {
     if (overId === 'backlog') return null
-    if (droppableIds.has(overId) && overId !== 'backlog') return overId
-    const overItem = allItems.find((i) => i.id === overId)
-    if (!overItem) return null
-    return overItem.sprintId && droppableIds.has(overItem.sprintId) ? overItem.sprintId : null
+    const rowId = overId.startsWith('row:') ? overId.slice(4) : null
+    const overItem = allItems.find((i) => i.id === (rowId ?? overId))
+    if (rowId || overItem) {
+      if (!overItem?.sprintId || !containerIds.has(overItem.sprintId)) return null
+      return overItem.sprintId
+    }
+    if (containerIds.has(overId)) return overId
+    return null
   }
 
   const onDragEnd = (e: DragEndEvent) => {

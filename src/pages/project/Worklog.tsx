@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   addMonths,
   eachDayOfInterval,
@@ -19,7 +19,7 @@ import { useProject } from './projectContext'
 import { canSeeAllWorklogs } from '../../lib/permissions'
 import { formatDuration, parseDuration, todayStr } from '../../lib/utils'
 import { Avatar, Modal, ProjectIcon, TypeIcon } from '../../components/ui'
-import { worklogService } from '../../services/api'
+import { userAdminService, worklogService } from '../../services/api'
 import type { Project, Sprint, User, WorkItem, WorkLog } from '../../types'
 import clsx from 'clsx'
 
@@ -149,6 +149,7 @@ function inBucket(date: string, b: { start: Date; end: Date }) {
 
 export default function Worklog() {
   const project = useProject()
+  const navigate = useNavigate()
   const me = useCurrentUser()
   const items = useStore((s) => s.items)
   const users = useStore((s) => s.users)
@@ -193,11 +194,33 @@ export default function Worklog() {
     () => items.filter((i) => (applied.projectId ? i.projectId === applied.projectId : i.projectId === project.id)),
     [items, applied.projectId, project.id],
   )
-  const memberUsers = useMemo(() => {
-    const ids = new Set(project.memberIds.concat(project.leadId))
-    return users.filter((u) => ids.has(u.id))
-  }, [users, project])
+  const directoryUsers = useMemo(() => {
+    const seen = new Set<string>()
+    return users
+      .filter((u) => {
+        const key = `${u.id}|${u.email.toLowerCase()}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [users])
   const projectSprints = useMemo(() => sprints.filter((s) => s.projectId === (applied.projectId || project.id)), [sprints, applied.projectId, project.id])
+
+  useEffect(() => {
+    let cancelled = false
+    void userAdminService.list()
+      .then((rows) => {
+        if (cancelled || !rows.length) return
+        const existing = useStore.getState().users
+        const extra = rows.filter(
+          (u) => !existing.some((e) => e.id === u.id || e.email.toLowerCase() === u.email.toLowerCase()),
+        )
+        if (extra.length) useStore.setState({ users: [...existing, ...extra] })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const buckets = useMemo(() => periodBuckets(applied.from, applied.to, applied.period), [applied.from, applied.to, applied.period])
 
@@ -372,8 +395,13 @@ export default function Worklog() {
           <button type="button" className="inline-flex h-8 items-center gap-1 rounded-[3px] border border-[#dfe1e6] bg-white px-2 text-[13px] text-[#42526e]">
             <Table2 size={14} /> Table <ChevronDown size={12} />
           </button>
-          <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-[3px] text-[#42526e] hover:bg-[#f4f5f7]" title="Settings">
-            <Settings size={16} />
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1 rounded-[3px] px-2 text-[13px] text-[#42526e] hover:bg-[#f4f5f7]"
+            title="Configure"
+            onClick={() => navigate(`/projects/${project.key}/settings/work-types`)}
+          >
+            <Settings size={16} /> Configure
           </button>
           <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-[3px] text-[#36b37e] hover:bg-[#f4f5f7]" title="Export Excel" onClick={exportCsv}>
             <FileSpreadsheet size={16} />
@@ -419,7 +447,7 @@ export default function Worklog() {
                 onChange={(e) => patchDraft({ userId: e.target.value })}
               >
                 <option value="">All users</option>
-                {memberUsers.map((u) => (
+                {directoryUsers.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}
                   </option>
